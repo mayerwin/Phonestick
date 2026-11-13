@@ -26,6 +26,16 @@ namespace Phonestick
                 return 0;
             }
 
+            // Internal: started by the updater. Wait for the previous process to exit (it holds the
+            // tray mutex), then empty the update folder that holds the previous exe.
+            int au = Array.IndexOf(args, "--after-update");
+            if (au >= 0 && au + 1 < args.Length && int.TryParse(args[au + 1], out var oldPid))
+            {
+                try { using (var old = System.Diagnostics.Process.GetProcessById(oldPid)) old.WaitForExit(20000); } catch { }
+                TrayApp.JustUpdated = true;
+            }
+            Updater.Cleanup();
+
             bool open = args.Any(a => a.Equals("--open", StringComparison.OrdinalIgnoreCase));
             using (var openSignal = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\" + AppInfo.Name + "-open"))
             using (var mutex = new Mutex(true, "Local\\" + AppInfo.Name + "-tray", out bool first))
@@ -46,6 +56,8 @@ namespace Phonestick
                 TrayApp.Demo = Has("--demo");
                 TrayApp.DemoIdle = Has("--demo-idle");
                 if (Has("--panel") || Has("--settings")) tray.ShowPanelSoon(Has("--settings"));
+                // --update-now: checks GitHub and installs a newer release, if any.
+                if (Has("--update-now")) tray.UpdateNowSoon();
                 Application.Run(tray);
             }
             return 0;

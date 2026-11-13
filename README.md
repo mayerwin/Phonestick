@@ -175,6 +175,8 @@ Phonestick adds no new server and no new protocol. It uses Android's own Wireles
 
 **iPhone? Mac? Linux?** Android 11 or newer and Windows 10 or 11 for now. Both parts are small and open source if you want to port them.
 
+**How do updates work?** Once a month Phonestick asks GitHub whether a new version is out. If so, it says so in its panel and tray menu, never in a popup. One click installs it (downloaded, checked against its published SHA-256, swapped in place, restarted). Turn the check off in Settings, or check any time from there.
+
 **Can I still use adb myself?** Yes. With the tile on, `adb mdns services` and `adb connect` reach the phone as usual.
 
 </details>

@@ -41,7 +41,7 @@ namespace Phonestick
         /// <summary>Set by Disconnect while a connect is running: its error, if any, is not shown.</summary>
         private volatile bool _cancelled;
 
-        private ToolStripMenuItem _open, _disconnect, _screen;
+        private ToolStripMenuItem _open, _disconnect, _screen, _updateItem;
 
         public TrayApp(EventWaitHandle openSignal, bool openNow)
         {
@@ -59,6 +59,8 @@ namespace Phonestick
             _tray.MouseClick += (s, e) => { if (e.Button == MouseButtons.Left) ToggleFlyout(); };
             _mount.Ended += () => _ui.Post(_ => OnMountEnded(), null);
             _idleTimer.Tick += (s, e) => CheckIdle();
+            _tray.BalloonTipClicked += (s, e) => { var a = _balloonClick; _balloonClick = null; a?.Invoke(); };
+            _tray.BalloonTipClosed += (s, e) => _balloonClick = null;
             // Redraw the tray glyph when the taskbar theme or scaling changes (events, not polling).
             SystemEvents.UserPreferenceChanged += (s, e) => _ui.Post(_ => RedrawTrayIcons(), null);
             SystemEvents.DisplaySettingsChanged += (s, e) => _ui.Post(_ => RedrawTrayIcons(), null);
@@ -78,6 +80,10 @@ namespace Phonestick
                         : "Click the icon to open your phone.");
             }
             RefreshMenu();
+            // First update check a minute after start, away from the login rush. One-shot.
+            var first = new System.Windows.Forms.Timer { Interval = 60000 };
+            first.Tick += (s, e) => { first.Stop(); first.Dispose(); MaybeCheckForUpdates(); };
+            first.Start();
 
             // "Phonestick.exe --open" from a shortcut signals this event. Waiting on it costs nothing.
             ThreadPool.RegisterWaitForSingleObject(openSignal,
@@ -103,7 +109,9 @@ namespace Phonestick
             foreach (var i in new[] { _open, _screen, _disconnect }) i.Padding = new Padding(6, 5, 6, 5);
             var settings = new ToolStripMenuItem("Settings", null, (s, e) => ShowPanel(true)) { Padding = new Padding(6, 5, 6, 5) };
             var quit = new ToolStripMenuItem("Quit " + AppInfo.Name, null, (s, e) => ExitApp()) { Padding = new Padding(6, 5, 6, 5) };
-            m.Items.AddRange(new ToolStripItem[] { _open, _screen, _disconnect, new ToolStripSeparator(), settings, quit });
+            _updateItem = new ToolStripMenuItem("Update", null, (s, e) => { if (_update != null) InstallUpdate(_update); })
+            { Padding = new Padding(6, 5, 6, 5), Visible = false, Font = Theme.UiFont(9.5f, FontStyle.Bold) };
+            m.Items.AddRange(new ToolStripItem[] { _open, _screen, _disconnect, new ToolStripSeparator(), _updateItem, settings, quit });
             return m;
         }
 
@@ -130,6 +138,9 @@ namespace Phonestick
             _screen.Enabled = setUp && !_busy && !screen;
             _disconnect.Enabled = _busy || _mount.IsMounted || screen;
             _disconnect.Text = _busy && !_mount.IsMounted && !screen ? "Cancel" : "Disconnect";
+            _updateItem.Visible = _update != null;
+            if (_update != null) _updateItem.Text = "Update to " + AppInfo.Name + " " + _update.VersionText;
+            _updateItem.Enabled = !_busy;
             _tray.Icon = _mount.IsMounted ? _iconMounted : (screen || _busy) ? _iconActive : _iconIdle;
             _tray.Text = Trim63(AppInfo.Name + ": " + status);
             if (Flyout.Current != null && !Flyout.Current.IsDisposed) Flyout.Current.UpdateState(BuildState());
@@ -139,11 +150,13 @@ namespace Phonestick
 
         /// <summary>"--demo": shows a connected phone named "Pixel" without connecting (screenshots).</summary>
         internal static bool Demo, DemoIdle;
+        /// <summary>Started by the updater ("--after-update").</summary>
+        internal static bool JustUpdated;
 
         private FlyoutState BuildState()
         {
             bool setUp = !string.IsNullOrEmpty(_cfg.PhoneSerial);
-            if (Demo || DemoIdle) return new FlyoutState { SetUp = true, Mounted = Demo, Drive = "P:", Phone = "Pixel", IdleMinutes = 60, Autostart = true };
+            if (Demo || DemoIdle) return new FlyoutState { SetUp = true, Mounted = Demo, Drive = "P:", Phone = "Pixel", IdleMinutes = 60, Autostart = true, UpdateText = "v" + Updater.CurrentText };
             return new FlyoutState
             {
                 SetUp = setUp,
@@ -155,6 +168,9 @@ namespace Phonestick
                 Phone = string.IsNullOrEmpty(_cfg.PhoneModel) ? "Your phone" : _cfg.PhoneModel,
                 IdleMinutes = _cfg.IdleMinutes,
                 Autostart = IsAutostart(),
+                CheckUpdates = _cfg.CheckUpdates,
+                UpdateText = UpdateText(),
+                UpdateAvailable = _update?.VersionText,
             };
         }
 
@@ -169,10 +185,13 @@ namespace Phonestick
             if (Flyout.Current != null && !Flyout.Current.IsDisposed) Flyout.Current.Close();
             RefreshMenu();
             new Flyout(BuildState(), this, settings).ShowNearTray();
+            MaybeCheckForUpdates();
         }
 
         /// <summary>"Phonestick.exe --panel": opens the panel at start (for a shortcut, or screenshots).</summary>
         internal void ShowPanelSoon(bool settings) => _ui.Post(_ => ShowPanel(settings), null);
+        /// <summary>"--update-now": checks GitHub and installs a newer release straight away (command line, tests).</summary>
+        internal void UpdateNowSoon() => _ui.Post(_ => CheckForUpdates(manual: true, install: true), null);
 
         // IPanelHost
         void IPanelHost.Open() => OpenPhone();
@@ -204,6 +223,101 @@ namespace Phonestick
         void IPanelHost.Pair() => PairForm.ShowPair();
         void IPanelHost.Help() { try { Process.Start(AppInfo.RepoUrl); } catch { } }
         void IPanelHost.Quit() => ExitApp();
+        void IPanelHost.SetCheckUpdates(bool on)
+        {
+            _cfg.CheckUpdates = on;
+            _cfg.Save();
+            RefreshMenu();
+            if (on) MaybeCheckForUpdates();
+        }
+        void IPanelHost.CheckUpdatesNow()
+        {
+            if (_update != null) { InstallUpdate(_update); return; }
+            CheckForUpdates(manual: true);
+        }
+
+        // ------------------------------------------------------------------ updates
+
+        private Updater.Info _update;
+        private bool _updateChecking;
+        private string _updateNote;
+
+        private string UpdateText() =>
+            _updateChecking ? "Checking..."
+            : _update != null ? "v" + _update.VersionText
+            : _updateNote ?? "v" + Updater.CurrentText;
+
+        /// <summary>Checks GitHub when the last check is older than the interval. Called at start and
+        /// when the panel opens, so a tray app left running for weeks still checks, with no timer.</summary>
+        private void MaybeCheckForUpdates()
+        {
+            if (!_cfg.CheckUpdates || _updateChecking || Demo || DemoIdle) return;
+            if (DateTime.UtcNow - _cfg.LastUpdateCheck < Updater.Interval) return;
+            CheckForUpdates(manual: false);
+        }
+
+        private void CheckForUpdates(bool manual, bool install = false)
+        {
+            if (_updateChecking) return;
+            _updateChecking = true;
+            _updateNote = null;
+            RefreshMenu();
+            Task.Run(() =>
+            {
+                Updater.Info info = null;
+                string error = null;
+                try { info = Updater.Check(); }
+                catch (Exception ex) { error = (ex is AggregateException ae ? ae.InnerException ?? ex : ex).Message; }
+                _ui.Post(_ =>
+                {
+                    _updateChecking = false;
+                    _cfg.LastUpdateCheck = DateTime.UtcNow;
+                    _cfg.Save();
+                    if (error != null)
+                    {
+                        Log.Write("update check failed: " + error);
+                        _updateNote = manual ? "Could not check" : null;
+                    }
+                    else if (info == null) _updateNote = manual ? "Up to date" : null;
+                    else
+                    {
+                        Log.Write("update available: " + info.VersionText);
+                        _update = info;
+                    }
+                    // Never a popup or a notification: a new version shows in the panel and the
+                    // tray menu only, for whenever the user next opens them.
+                    RefreshMenu();
+                    if (install && info != null) InstallUpdate(info);
+                }, null);
+            });
+        }
+
+        private void InstallUpdate(Updater.Info info)
+        {
+            if (Flyout.Current != null && !Flyout.Current.IsDisposed) Flyout.Current.Close();
+            if (!Updater.CanInstall(out var reason))
+            {
+                MessageBox.Show(reason + "\n\nThe release page will open so you can download it yourself.", AppInfo.Name,
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                Updater.OpenReleasePage(info.Page);
+                return;
+            }
+            if (_busy) { MessageBox.Show("Wait for the current connection to finish, then try again.", AppInfo.Name); return; }
+            bool done = false;
+            Run("Updating", log =>
+            {
+                DisconnectAll(); // never swap the exe under a mounted drive or a screen session
+                Updater.Install(info, log);
+                done = true;
+            }, after: () =>
+            {
+                if (!done) return;
+                try { Updater.Relaunch(); }
+                catch (Exception ex) { Log.Write("relaunch failed: " + ex.Message); }
+                _tray.Visible = false;
+                ExitThread();
+            });
+        }
 
         internal static string IdleLabel(int min) =>
             min == 0 ? "Never" : min < 60 ? min + " minutes" : (min / 60) + (min == 60 ? " hour" : " hours");
@@ -350,12 +464,12 @@ namespace Phonestick
         }
 
         /// <summary>Runs an action off the UI thread, showing errors as messages.</summary>
-        internal void Run(string what, Action<Action<string>> action)
+        internal void Run(string what, Action<Action<string>> action, Action after = null)
         {
             if (_busy) return;
             _busy = true;
             _cancelled = false;
-            _busyText = what.StartsWith("Disconnect") ? "Disconnecting..." : "Connecting...";
+            _busyText = what.StartsWith("Disconnect") ? "Disconnecting..." : what.StartsWith("Updat") ? "Updating..." : "Connecting...";
             RefreshMenu();
             _tray.Text = AppInfo.Name + ": " + what + "...";
             Task.Run(() =>
@@ -372,6 +486,7 @@ namespace Phonestick
                     _busy = false;
                     RefreshMenu();
                     if (error != null) MessageBox.Show(error, AppInfo.Name, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    after?.Invoke();
                 }, null);
             });
         }
@@ -387,8 +502,11 @@ namespace Phonestick
             try { Process.Start("explorer.exe", drive + "\\"); } catch { }
         }
 
-        private void Balloon(string title, string text)
+        private Action _balloonClick;
+
+        private void Balloon(string title, string text, Action onClick = null)
         {
+            _balloonClick = onClick;
             _tray.BalloonTipTitle = title;
             _tray.BalloonTipText = text;
             _tray.ShowBalloonTip(5000);

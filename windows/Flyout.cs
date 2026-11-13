@@ -20,6 +20,11 @@ namespace Phonestick
         public string Drive = "P:";
         public int IdleMinutes = 60;
         public bool Autostart;
+        public bool CheckUpdates = true;
+        /// <summary>Right-hand text of the "Check for updates" row: version, "Checking...", "Up to date"...</summary>
+        public string UpdateText = "";
+        /// <summary>A newer version ready to install ("0.3.2"), or null.</summary>
+        public string UpdateAvailable;
         public bool Connected => Mounted || Screen;
     }
 
@@ -32,6 +37,8 @@ namespace Phonestick
         void SetIdle(int minutes);
         void NextDrive();
         void SetAutostart(bool on);
+        void SetCheckUpdates(bool on);
+        void CheckUpdatesNow();
         void Setup();
         void Pair();
         void Help();
@@ -68,7 +75,8 @@ namespace Phonestick
         {
             public RectangleF R;
             public string Text, Icon;
-            public bool Primary, Enabled = true, IconOnly, Pill, Selected, Row, Switch;
+            public bool Primary, Enabled = true, IconOnly, Pill, Selected, Row, Switch, Link;
+            public string Detail;
             public Action Click;
         }
 
@@ -153,6 +161,13 @@ namespace Phonestick
             });
             _cardBottom = y + 36 + 16;
             _height = _cardBottom + 12 + 18 + 12;
+            if (_s.UpdateAvailable != null)
+                _buttons.Add(new Btn
+                {
+                    R = new RectangleF(Pad - 4, _cardBottom + 6, W - Pad * 2 + 8, 30), Link = true, Icon = Glyphs.Download,
+                    Text = AppInfo.Name + " " + _s.UpdateAvailable + " is available. Install",
+                    Click = () => { Close(); _host.CheckUpdatesNow(); },
+                });
         }
 
         private void LayoutSettings()
@@ -186,19 +201,26 @@ namespace Phonestick
                 R = new RectangleF(x + w - 44, y - 3, 44, 24), Switch = true, Selected = _s.Autostart,
                 Click = () => _host.SetAutostart(!_s.Autostart),
             });
+            y += 22 + 18;
+            _buttons.Add(new Btn
+            {
+                R = new RectangleF(x + w - 44, y - 3, 44, 24), Switch = true, Selected = _s.CheckUpdates,
+                Click = () => _host.SetCheckUpdates(!_s.CheckUpdates),
+            });
             y += 22 + 16;
             _cardBottom = y;
 
             // Card 2: one-off actions, as rows
             _card2Top = _cardBottom + 12;
             float ry = _card2Top + 6;
-            void Row(string text, string icon, Action a)
+            void Row(string text, string icon, Action a, string detail = null)
             {
-                _buttons.Add(new Btn { R = new RectangleF(Pad + 6, ry, W - Pad * 2 - 12, 40), Text = text, Icon = icon, Row = true, Click = a });
+                _buttons.Add(new Btn { R = new RectangleF(Pad + 6, ry, W - Pad * 2 - 12, 40), Text = text, Icon = icon, Row = true, Click = a, Detail = detail });
                 ry += 40;
             }
             Row("Set up a phone", Glyphs.Smartphone, () => { Close(); _host.Setup(); });
             Row("Pair with a Wi-Fi code", Glyphs.Wifi, () => { Close(); _host.Pair(); });
+            Row(_s.UpdateAvailable != null ? "Install update" : "Check for updates", Glyphs.Download, () => _host.CheckUpdatesNow(), _s.UpdateText);
             Row("Help and source code", Glyphs.FileText, () => { Close(); _host.Help(); });
             Row("Quit " + AppInfo.Name, Glyphs.Power, () => { Close(); _host.Quit(); });
             _card2Bottom = ry + 6;
@@ -328,8 +350,9 @@ namespace Phonestick
                     g.DrawString(detail, fd, bd, new RectangleF(dx, ty + 0.5f, band.Right - 12 - dx, 20), sf);
             }
 
-            DrawText(g, _s.SetUp ? "The tile on your phone switches access on or off" : "Right-click the tray icon for more",
-                Theme.Px(12), Theme.Muted, Pad + 2, _cardBottom + 13);
+            if (_s.UpdateAvailable == null)
+                DrawText(g, _s.SetUp ? "The tile on your phone switches access on or off" : "Right-click the tray icon for more",
+                    Theme.Px(12), Theme.Muted, Pad + 2, _cardBottom + 13);
         }
 
         private void PaintSettings(Graphics g)
@@ -344,6 +367,13 @@ namespace Phonestick
             DrawText(g, "Drive letter", Theme.Px(13.5f, FontStyle.Bold), Theme.Text, x, y);
             y += 22 + 18;
             DrawText(g, "Start with Windows", Theme.Px(13.5f, FontStyle.Bold), Theme.Text, x, y);
+            y += 22 + 18;
+            DrawText(g, "Check for updates", Theme.Px(13.5f, FontStyle.Bold), Theme.Text, x, y);
+            using (var fb = Theme.Px(13.5f, FontStyle.Bold))
+            {
+                var lw = g.MeasureString("Check for updates", fb, PointF.Empty, StringFormat.GenericTypographic).Width;
+                DrawText(g, "monthly", Theme.Px(12.5f), Theme.Muted, x + lw + 8, y + 1);
+            }
 
             var card2 = new RectangleF(Pad, _card2Top, W - Pad * 2, _card2Bottom - _card2Top);
             Card(g, card2);
@@ -384,7 +414,28 @@ namespace Phonestick
                 using (var f = Theme.Px(13.5f))
                 using (var br = new SolidBrush(Theme.Text))
                     g.DrawString(b.Text, f, br, b.R.X + 42, b.R.Y + 11, sf);
+                if (!string.IsNullOrEmpty(b.Detail))
+                    using (var f = Theme.Px(12.5f))
+                    using (var br = new SolidBrush(Theme.Muted))
+                    {
+                        var ds = g.MeasureString(b.Detail, f, PointF.Empty, sf);
+                        g.DrawString(b.Detail, f, br, b.R.Right - 34 - ds.Width, b.R.Y + 12, sf);
+                    }
                 Glyphs.Draw(g, ChevronRight, Theme.Muted, b.R.Right - 26, b.R.Y + 12, 16, 1.8f);
+                return;
+            }
+            if (b.Link)
+            {
+                using (var f = Theme.Px(12.5f, FontStyle.Bold))
+                using (var br = new SolidBrush(hover ? Theme.AccentHover : Theme.AccentText))
+                {
+                    if (hover || down)
+                        using (var path = Theme.Rounded(b.R, 8))
+                        using (var bg = new SolidBrush(Theme.AccentTint))
+                            g.FillPath(bg, path);
+                    Glyphs.Draw(g, b.Icon, hover ? Theme.AccentHover : Theme.AccentText, b.R.X + 6, b.R.Y + 7, 16, 2f);
+                    g.DrawString(b.Text, f, br, b.R.X + 28, b.R.Y + 8, sf);
+                }
                 return;
             }
             if (b.Pill)

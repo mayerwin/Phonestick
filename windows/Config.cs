@@ -62,6 +62,10 @@ namespace Phonestick
         /// <summary>Minutes without file activity before the drive is disconnected. 0 = never.</summary>
         public int IdleMinutes { get; set; } = 60;
         public bool FirstRunDone { get; set; }
+        /// <summary>Look for a new release on GitHub, at most once every 30 days. On by default.</summary>
+        public bool CheckUpdates { get; set; } = true;
+        /// <summary>UTC time of the last completed update check; MinValue = never.</summary>
+        public DateTime LastUpdateCheck { get; set; } = DateTime.MinValue;
 
         public static Config Load()
         {
@@ -79,6 +83,9 @@ namespace Phonestick
                 if (d.TryGetValue("Drive", out var dr) && dr.Length >= 1) c.Drive = dr.Substring(0, 1).ToUpperInvariant() + ":";
                 if (d.TryGetValue("IdleMinutes", out var im) && int.TryParse(im, out var i) && i >= 0) c.IdleMinutes = i;
                 if (d.TryGetValue("FirstRunDone", out var f)) c.FirstRunDone = f == "1";
+                if (d.TryGetValue("CheckUpdates", out var cu)) c.CheckUpdates = cu != "0";
+                if (d.TryGetValue("LastUpdateCheck", out var lu) && long.TryParse(lu, out var ticks) && ticks > 0)
+                    c.LastUpdateCheck = new DateTime(ticks, DateTimeKind.Utc);
             }
             catch { /* defaults */ }
             return c;
@@ -95,6 +102,8 @@ namespace Phonestick
                 "Drive=" + Drive,
                 "IdleMinutes=" + IdleMinutes,
                 "FirstRunDone=" + (FirstRunDone ? "1" : "0"),
+                "CheckUpdates=" + (CheckUpdates ? "1" : "0"),
+                "LastUpdateCheck=" + LastUpdateCheck.Ticks,
             };
             File.WriteAllLines(FilePath, lines);
         }

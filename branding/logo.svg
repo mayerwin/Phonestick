@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7C3AED"/><stop offset="1" stop-color="#5B21B6"/>
+    </linearGradient>
+    <linearGradient id="hl" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.18"/><stop offset="0.5" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#bg)"/>
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#hl)"/>
+  <!-- phone body -->
+  <rect x="78" y="34" width="100" height="150" rx="22" fill="#fff"/>
+  <!-- screen -->
+  <rect x="91" y="48" width="74" height="112" rx="11" fill="#5B21B6"/>
+  <!-- wifi on screen -->
+  <g fill="none" stroke="#fff" stroke-width="10" stroke-linecap="round">
+    <path d="M100 98 a40 40 0 0 1 56 0"/>
+    <path d="M111 114 a24 24 0 0 1 34 0"/>
+  </g>
+  <circle cx="128" cy="131" r="7" fill="#fff"/>
+  <!-- plug -->
+  <rect x="102" y="182" width="52" height="40" rx="6" fill="#fff"/>
+  <rect x="112" y="194" width="11" height="11" rx="2" fill="#5B21B6"/>
+  <rect x="133" y="194" width="11" height="11" rx="2" fill="#5B21B6"/>
+</svg>

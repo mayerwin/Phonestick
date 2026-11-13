@@ -1,0 +1,15 @@
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+*.iml
+
+# Windows
+windows/bin/
+windows/obj/
+windows/.vs/
+
+# Branding tool caches
+branding/tools/__pycache__/

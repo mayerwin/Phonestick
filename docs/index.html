@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phonestick: your Android phone as a USB stick, over Wi-Fi</title>
+<meta name="description" content="Phonestick puts your Android phone in Windows Explorer as a drive, over your home Wi-Fi. No cable, no cloud, nothing running in the background. Only your laptop can connect, and only while the tile is on. Free and open source.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Phonestick: your phone as a USB stick, over Wi-Fi">
+<meta property="og:description" content="Your Android phone as drive P: in Windows Explorer. No cable, no cloud, no background app. Only your laptop, only when you want.">
+<meta property="og:image" content="https://mayerwin.github.io/Phonestick/assets/og.png">
+<meta property="og:url" content="https://mayerwin.github.io/Phonestick/">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#6D28D9">
+<link rel="icon" type="image/png" href="assets/favicon-32.png">
+<link rel="apple-touch-icon" href="assets/logo-256.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#F4F5F7; --surface:#FFFFFF; --ink:#16181D; --ink2:#454A54; --dim:#646A75;
+    --tonal:#EEF0F3; --tonal2:#E4E7EB; --edge:rgba(16,24,40,.07);
+    --accent:#6D28D9; --accent2:#5B21B6; --accent-soft:rgba(109,40,217,.09); --accent-ink:#6D28D9;
+    --ok:#15803D; --okbg:#E6F4EA;
+    --shadow:0 1px 2px rgba(16,24,40,.05), 0 8px 24px rgba(16,24,40,.07);
+    --shadow-lg:0 2px 6px rgba(16,24,40,.06), 0 24px 60px rgba(16,24,40,.12);
+    --display:'Manrope', 'Segoe UI', system-ui, sans-serif;
+    --sans:'Inter', 'Segoe UI', system-ui, sans-serif;
+    --mono:'JetBrains Mono', ui-monospace, Consolas, monospace;
+    --r:16px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0F1013; --surface:#17181C; --ink:#EDEEF0; --ink2:#B4B8C0; --dim:#8D929C;
+      --tonal:#22232A; --tonal2:#2C2D35; --edge:rgba(255,255,255,.07);
+      --accent:#7C3AED; --accent2:#8B5CF6; --accent-soft:rgba(139,92,246,.16); --accent-ink:#C4B5FD;
+      --ok:#6EE7A0; --okbg:#14301F;
+      --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.3);
+      --shadow-lg:0 2px 6px rgba(0,0,0,.3), 0 24px 60px rgba(0,0,0,.45);
+    }
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 var(--sans);-webkit-font-smoothing:antialiased;overflow-x:hidden}
+  a{color:var(--accent-ink);text-decoration:none}
+  a:hover{text-decoration:underline}
+  img{max-width:100%;display:block}
+  .wrap{max-width:1120px;margin:0 auto;padding:0 24px}
+  h1,h2,h3{font-family:var(--display);letter-spacing:-.02em;margin:0}
+  .label{font:600 12px/1 var(--sans);letter-spacing:.09em;text-transform:uppercase;color:var(--dim)}
+  .muted{color:var(--dim)}
+  code,.mono{font-family:var(--mono);font-size:.92em}
+
+  /* nav */
+  nav{position:sticky;top:0;z-index:30;background:color-mix(in srgb, var(--bg) 82%, transparent);backdrop-filter:saturate(1.4) blur(12px);border-bottom:1px solid var(--edge)}
+  nav .wrap{display:flex;align-items:center;gap:28px;height:64px}
+  .brand{display:flex;align-items:center;gap:10px;font:800 19px var(--display);color:var(--ink);letter-spacing:-.01em}
+  .brand img{width:30px;height:30px;border-radius:8px}
+  nav .links{display:flex;gap:22px;margin-left:auto;font-size:14.5px}
+  nav .links a{color:var(--ink2)}
+  .btn{display:inline-flex;align-items:center;gap:9px;height:44px;padding:0 20px;border-radius:10px;font:600 15px var(--sans);border:0;cursor:pointer;text-decoration:none!important;transition:background .15s ease, transform .15s ease}
+  .btn svg{width:18px;height:18px}
+  .btn.primary{background:var(--accent);color:#fff}
+  .btn.primary:hover{background:var(--accent2)}
+  .btn.tonal{background:var(--tonal);color:var(--ink)}
+  .btn.tonal:hover{background:var(--tonal2)}
+  .btn.sm{height:36px;padding:0 14px;font-size:14px;border-radius:9px}
+
+  /* hero */
+  .hero{padding:72px 0 40px;position:relative}
+  .hero::before{content:"";position:absolute;inset:-120px 0 auto 0;height:620px;z-index:-1;
+    background:radial-gradient(60% 55% at 70% 30%, var(--accent-soft), transparent 70%)}
+  .hero .grid{display:grid;grid-template-columns:1.02fr 1fr;gap:56px;align-items:center}
+  .eyebrow{display:inline-flex;align-items:center;gap:8px;padding:6px 12px 6px 8px;border-radius:999px;background:var(--surface);box-shadow:var(--shadow);font-size:13px;color:var(--ink2);margin-bottom:22px}
+  .eyebrow b{background:var(--accent-soft);color:var(--accent-ink);border-radius:999px;padding:2px 8px;font-weight:600}
+  .hero h1{font-size:clamp(40px,5.4vw,64px);line-height:1.04;font-weight:800}
+  .hero h1 em{font-style:normal;color:var(--accent-ink)}
+  .hero p.lead{font-size:19px;color:var(--ink2);margin:22px 0 30px;max-width:33em}
+  .cta{display:flex;gap:12px;flex-wrap:wrap}
+  .small-print{margin-top:16px;font-size:13.5px;color:var(--dim)}
+
+  /* the demo: phone tile + explorer */
+  .demo{position:relative;height:540px}
+  .phone{position:absolute;right:0;top:110px;width:236px;height:400px;border-radius:38px;background:#111216;padding:10px;box-shadow:var(--shadow-lg);z-index:2}
+  .phone .screen{height:100%;border-radius:30px;background:linear-gradient(180deg,#1d1e24,#14151a);padding:22px 14px;color:#EDEEF0;overflow:hidden;position:relative}
+  .phone .time{font:600 30px var(--display);letter-spacing:-.02em}
+  .phone .date{font-size:11px;color:#9a9ea8;margin-bottom:16px}
+  .tiles{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .tile{border-radius:18px;padding:10px 10px;background:#2A2B32;display:flex;gap:8px;align-items:center;font-size:11.5px;line-height:1.25;min-height:54px;user-select:none}
+  .tile svg{width:18px;height:18px;flex:none}
+  .tile small{display:block;color:#9a9ea8;font-size:10px}
+  .tile.ps{cursor:pointer;transition:background .2s ease, color .2s ease;position:relative}
+  .tile.ps.on{background:#C4B5FD;color:#1c1236}
+  .tile.ps.on small{color:#3b2a66}
+  .tile.ps:focus-visible{outline:2px solid #C4B5FD;outline-offset:2px}
+  .tap-hint{position:absolute;left:16px;top:159px;width:34px;height:34px;border-radius:50%;border:2px solid rgba(196,181,253,.9);animation:tap 2.2s ease-out infinite;pointer-events:none}
+  @keyframes tap{0%{transform:scale(.6);opacity:0}25%{opacity:1}100%{transform:scale(1.6);opacity:0}}
+  .tap-hint.gone{display:none}
+  .phone .notice{position:absolute;left:14px;right:14px;bottom:18px;font-size:10.5px;color:#9a9ea8;text-align:center}
+
+  .explorer{position:absolute;left:0;top:0;width:min(470px,90%);border-radius:12px;background:var(--surface);box-shadow:var(--shadow-lg);overflow:hidden;z-index:1;border:1px solid var(--edge)}
+  .explorer .bar{height:38px;display:flex;align-items:center;gap:10px;padding:0 14px;background:var(--tonal);font-size:12.5px;color:var(--ink2)}
+  .explorer .bar i{width:10px;height:10px;border-radius:50%;background:var(--tonal2);display:inline-block}
+  .explorer .bar span{margin-left:6px}
+  .explorer .body{padding:18px 18px 22px}
+  .explorer h4{margin:0 0 12px;font:600 13px var(--sans);color:var(--dim)}
+  .drive{display:flex;gap:14px;align-items:center;padding:12px;border-radius:10px;transition:background .2s}
+  .drive + .drive{margin-top:6px}
+  .drive .ic{width:44px;height:44px;border-radius:10px;display:grid;place-items:center;background:var(--tonal);color:var(--ink2);flex:none}
+  .drive .ic svg{width:24px;height:24px}
+  .drive b{display:block;font-weight:600;font-size:14.5px}
+  .drive .meter{height:6px;border-radius:3px;background:var(--tonal);margin-top:7px;overflow:hidden;width:220px;max-width:100%}
+  .drive .meter i{display:block;height:100%;background:#3B82F6;border-radius:3px}
+  .drive small{color:var(--dim);font-size:12px}
+  .drive.p{opacity:0;transform:translateY(8px);height:0;padding:0 12px;margin:0;overflow:hidden;transition:opacity .35s ease, transform .35s ease, height .35s ease, padding .35s ease, margin .35s ease}
+  .drive.p.show{opacity:1;transform:none;height:68px;padding:12px;margin-top:6px;background:var(--accent-soft)}
+  .drive.p .ic{background:var(--accent);color:#fff}
+  .drive.p .meter i{background:var(--accent)}
+  .toast{position:absolute;left:0;top:300px;transform:translateY(12px);background:var(--surface);border-radius:12px;box-shadow:var(--shadow-lg);padding:12px 14px;display:flex;gap:10px;align-items:center;font-size:13px;width:290px;opacity:0;transition:opacity .3s ease, transform .3s ease;z-index:3;border:1px solid var(--edge)}
+  .toast.show{opacity:1;transform:none}
+  .toast .dot{width:10px;height:10px;border-radius:50%;background:#22C55E;flex:none}
+
+  /* sections */
+  section{padding:84px 0}
+  .section-head{max-width:640px;margin-bottom:40px}
+  .section-head h2{font-size:clamp(30px,3.6vw,42px);line-height:1.12;margin:12px 0 14px;font-weight:800}
+  .section-head p{color:var(--ink2);font-size:17.5px;margin:0}
+
+  .promises{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+  .card{background:var(--surface);border-radius:var(--r);box-shadow:var(--shadow);padding:26px;border:1px solid var(--edge)}
+  .card .ic{width:44px;height:44px;border-radius:11px;background:var(--accent-soft);color:var(--accent-ink);display:grid;place-items:center;margin-bottom:18px}
+  .card .ic svg{width:22px;height:22px}
+  .card h3{font-size:19px;font-weight:700;margin-bottom:8px}
+  .card p{margin:0;color:var(--ink2);font-size:15.5px}
+
+  .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;counter-reset:s}
+  .step{position:relative;padding-top:58px}
+  .step::before{counter-increment:s;content:counter(s);position:absolute;top:0;left:0;width:40px;height:40px;border-radius:12px;background:var(--accent);color:#fff;display:grid;place-items:center;font:800 18px var(--display)}
+  .step h3{font-size:19px;margin-bottom:8px}
+  .step p{margin:0;color:var(--ink2);font-size:15.5px}
+
+  .shots{display:grid;grid-template-columns:1.25fr 1fr;gap:22px;align-items:start}
+  .shot-stack{display:grid;gap:22px}
+  .frame{background:var(--surface);border-radius:20px;box-shadow:var(--shadow);border:1px solid var(--edge);padding:22px;overflow:hidden}
+  .frame .cap{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:16px}
+  .frame .cap h3{font-size:17px;font-weight:700}
+  .frame .cap span{font-size:13px;color:var(--dim)}
+  .panels{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+  .panels img{border-radius:12px;box-shadow:0 10px 30px rgba(16,24,40,.16)}
+  .phone-shot{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .phone-shot img{border-radius:18px;border:6px solid #111216}
+  .seg{display:inline-flex;background:var(--tonal);border-radius:9px;padding:3px}
+  .seg button{border:0;background:transparent;font:500 13px var(--sans);color:var(--ink2);padding:6px 12px;border-radius:7px;cursor:pointer}
+  .seg button.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+
+  .sec-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+  .sec{display:flex;gap:16px;padding:20px;background:var(--surface);border-radius:14px;border:1px solid var(--edge)}
+  .sec svg{width:22px;height:22px;flex:none;color:var(--accent-ink);margin-top:2px}
+  .sec h3{font:600 16px var(--sans);letter-spacing:0;margin-bottom:4px}
+  .sec p{margin:0;color:var(--ink2);font-size:14.5px}
+
+  .compare{width:100%;border-collapse:separate;border-spacing:0;background:var(--surface);border-radius:16px;overflow:hidden;box-shadow:var(--shadow);border:1px solid var(--edge);font-size:15px}
+  .compare th,.compare td{padding:14px 18px;text-align:left;border-bottom:1px solid var(--edge)}
+  .compare th{font:600 13px var(--sans);color:var(--dim);background:var(--tonal)}
+  .compare tr:last-child td{border-bottom:0}
+  .compare td:first-child{color:var(--ink2)}
+  .yes{color:var(--ok);font-weight:600}
+  .no{color:var(--dim)}
+  .compare .us{background:var(--accent-soft)}
+
+  .install{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+  pre{margin:0;background:#14151a;color:#E6E7EB;border-radius:12px;padding:16px 18px;font:13.5px/1.6 var(--mono);overflow:auto}
+  ol.clean{margin:0;padding-left:20px;color:var(--ink2)}
+  ol.clean li{margin:6px 0}
+
+  details{background:var(--surface);border-radius:14px;border:1px solid var(--edge);padding:0 20px;margin-bottom:10px}
+  summary{cursor:pointer;list-style:none;padding:18px 0;font-weight:600;display:flex;justify-content:space-between;gap:14px}
+  summary::-webkit-details-marker{display:none}
+  summary::after{content:"+";font:500 22px/1 var(--sans);color:var(--dim);transition:transform .2s}
+  details[open] summary::after{transform:rotate(45deg)}
+  details p{margin:0 0 18px;color:var(--ink2)}
+
+  .final{text-align:center;padding:90px 0}
+  .final img{width:84px;height:84px;margin:0 auto 22px;border-radius:20px;box-shadow:var(--shadow-lg)}
+  .final h2{font-size:clamp(30px,3.6vw,44px);margin-bottom:12px}
+  .final p{color:var(--ink2);font-size:17.5px;margin:0 auto 28px;max-width:34em}
+  .final .cta{justify-content:center}
+
+  footer{border-top:1px solid var(--edge);padding:28px 0;color:var(--dim);font-size:14px}
+  footer .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+
+  .reveal{opacity:0;transform:translateY(10px);transition:opacity .5s ease, transform .5s ease}
+  .reveal.in{opacity:1;transform:none}
+
+  @media (max-width: 920px){
+    .hero .grid,.shots,.install{grid-template-columns:1fr}
+    .demo{height:560px;max-width:520px}
+    .promises,.steps{grid-template-columns:1fr}
+    .sec-grid{grid-template-columns:1fr}
+    nav .links a:not(.keep){display:none}
+  }
+  @media (max-width: 520px){
+    .demo{height:600px}
+    .explorer{width:100%;top:0}
+    .phone{width:200px;height:350px;top:240px}
+    .toast{top:auto;bottom:0;width:100%}
+    .tap-hint{left:14px;top:150px}
+    .panels,.phone-shot{grid-template-columns:1fr}
+    .compare th,.compare td{padding:12px 10px;font-size:13.5px}
+  }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-phone" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+    <symbol id="i-power" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/></symbol>
+    <symbol id="i-leaf" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 14l1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2"/></symbol>
+    <symbol id="i-drive" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12H2"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><path d="M6 16h.01M10 16h.01"/></symbol>
+    <symbol id="i-wifi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h.01"/><path d="M2 8.82a15 15 0 0 1 20 0"/><path d="M5 12.86a10 10 0 0 1 14 0"/><path d="M8.5 16.43a5 5 0 0 1 7 0"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="i-usb" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="7" r="1"/><circle cx="4" cy="20" r="1"/><path d="M4.7 19.3 19 5"/><path d="m21 3-3 1 2 2Z"/><path d="M9.26 7.68 5 12l2 5"/><path d="m10 14 5 2 3.5-3.5"/><path d="m18 12 1-1 1 1-1 1Z"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></symbol>
+    <symbol id="i-eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.53 13.53 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><path d="M2 2l20 20"/></symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
+    <symbol id="i-github" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.65.5.5 5.65.5 12a11.5 11.5 0 0 0 7.86 10.92c.58.1.79-.25.79-.56v-2c-3.2.7-3.87-1.37-3.87-1.37-.53-1.33-1.28-1.69-1.28-1.69-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.71 1.26 3.37.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.7 5.4-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></symbol>
+  </defs>
+</svg>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="#"><img src="assets/logo-256.png" alt="">Phonestick</a>
+    <div class="links">
+      <a href="#how">How it works</a>
+      <a href="#screens">Screens</a>
+      <a href="#security">Security</a>
+      <a href="#faq">FAQ</a>
+      <a class="keep" href="https://github.com/mayerwin/Phonestick">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap grid">
+    <div>
+      <div class="eyebrow"><b>Free</b> Open source, for Windows and Android</div>
+      <h1>Your phone,<br>as a <em>USB stick</em>.<br>Over Wi-Fi.</h1>
+      <p class="lead">Phonestick puts your Android phone in Windows Explorer as drive <b>P:</b>. No cable, no cloud, no app running in the background. Only your laptop can reach it, and only while the tile is on.</p>
+      <div class="cta">
+        <a class="btn primary" href="https://github.com/mayerwin/Phonestick/releases/latest"><svg><use href="#i-download"/></svg>Download for Windows</a>
+        <a class="btn tonal" href="https://github.com/mayerwin/Phonestick"><svg><use href="#i-github"/></svg>View the source</a>
+      </div>
+      <div class="small-print">Windows 10 or 11 · Android 11 or newer · No root · MIT licence</div>
+    </div>
+
+    <div class="demo" aria-label="Demo: tap the Phonestick tile to make the phone appear as drive P:">
+      <div class="phone">
+        <div class="screen">
+          <div class="time">9:41</div>
+          <div class="date">Quick Settings</div>
+          <div class="tiles">
+            <div class="tile"><svg><use href="#i-wifi"/></svg><div>Wi-Fi<small>Home</small></div></div>
+            <div class="tile"><svg><use href="#i-power"/></svg><div>Battery Saver<small>Off</small></div></div>
+            <div class="tile ps" id="tile" role="switch" aria-checked="false" tabindex="0"><svg><use href="#i-phone"/></svg><div>Phonestick<small id="tileSub">Off</small></div></div>
+            <div class="tile"><svg><use href="#i-eye-off"/></svg><div>Dark theme<small>On</small></div></div>
+          </div>
+          <span class="tap-hint" id="hint"></span>
+          <div class="notice">Tap the Phonestick tile</div>
+        </div>
+      </div>
+      <div class="explorer">
+        <div class="bar"><i></i><i></i><i></i><span>This PC</span></div>
+        <div class="body">
+          <h4>Devices and drives</h4>
+          <div class="drive"><div class="ic"><svg><use href="#i-drive"/></svg></div><div><b>Local Disk (C:)</b><div class="meter"><i style="width:62%"></i></div><small>182 GB free of 476 GB</small></div></div>
+          <div class="drive p" id="drive"><div class="ic"><svg><use href="#i-phone"/></svg></div><div><b>Phone (P:)</b><div class="meter"><i style="width:71%"></i></div><small>68 GB free of 228 GB · over Wi-Fi</small></div></div>
+        </div>
+      </div>
+      <div class="toast" id="toast"><span class="dot"></span><div><b>Files open on P:</b><br><span class="muted">Closes by itself after an hour unused</span></div></div>
+    </div>
+  </div>
+</header>
+
+<section id="why">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="label">Three promises</span>
+      <h2>Like plugging in a USB stick. Without the plug, or the risk.</h2>
+      <p>Android already has a secure way for a computer to reach a phone: Wireless debugging. Phonestick makes it effortless, and keeps it locked to you.</p>
+    </div>
+    <div class="promises">
+      <div class="card reveal"><div class="ic"><svg><use href="#i-key"/></svg></div><h3>Only your computer</h3><p>The connection is encrypted and needs a key only your paired laptop holds. USB debugging stays locked off, so another computer or a public charging port gets nothing.</p></div>
+      <div class="card reveal"><div class="ic"><svg><use href="#i-power"/></svg></div><h3>Only when you want</h3><p>One Quick Settings tile. On: your laptop can connect, on the Wi-Fi networks you approved. Off: nothing on the phone is listening.</p></div>
+      <div class="card reveal"><div class="ic"><svg><use href="#i-leaf"/></svg></div><h3>Nothing in the background</h3><p>The phone app is 85 KB, has no internet or location permission and never runs on its own. Android wakes it for a moment when Wi-Fi changes. That's it.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="how" style="padding-top:20px">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="label">How it works</span>
+      <h2>Pair once. Then it just works.</h2>
+      <p>No account, no cloud relay, no server app on the phone. Your files travel straight from the phone to your laptop on your own network.</p>
+    </div>
+    <div class="steps">
+      <div class="step reveal"><h3>Pair your laptop</h3><p>Turn on Wireless debugging on the phone and type the 6-digit pairing code into Phonestick. Setup installs the phone app and adds its tile. No cable needed.</p></div>
+      <div class="step reveal"><h3>Flip the tile</h3><p>While the tile is on, the app keeps Wireless debugging available on your home Wi-Fi, through reboots, reconnects and access-point changes.</p></div>
+      <div class="step reveal"><h3>Open P:</h3><p>Click the tray icon, then <b>Open phone files</b>. Your photos, downloads and documents appear in Explorer. It disconnects by itself when you stop using it.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="screens">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="label">Screens</span>
+      <h2>Calm, clear, and out of your way.</h2>
+      <p>A small panel in the Windows tray and a single screen on the phone. Light and dark, following your system.</p>
+    </div>
+    <div class="shots">
+      <div class="frame reveal">
+        <div class="cap"><h3>The Windows tray panel</h3>
+          <div class="seg" role="tablist" aria-label="Theme"><button class="on" data-theme="light">Light</button><button data-theme="dark">Dark</button></div></div>
+        <div class="panels">
+          <img data-shot="panel-connected" src="screenshots/panel-connected-light.png" alt="Phonestick panel with the phone's files open on drive P:" loading="lazy">
+          <img data-shot="panel-settings" src="screenshots/panel-settings-light.png" alt="Phonestick settings: auto-disconnect time, drive letter, start with Windows" loading="lazy">
+        </div>
+        <p class="muted" style="margin:16px 0 0;font-size:14.5px">Open files, mirror the screen with scrcpy, disconnect. Settings live in the same panel: auto-disconnect after 15 minutes to 2 hours (or never), the drive letter, start with Windows.</p>
+      </div>
+      <div class="frame reveal">
+        <div class="cap"><h3>On the phone</h3><span>Light and dark</span></div>
+        <div class="phone-shot">
+          <img src="screenshots/phone-light.png" alt="Phonestick Android app, light theme: access on, ready on this Wi-Fi" loading="lazy">
+          <img src="screenshots/phone-dark.png" alt="Phonestick Android app, dark theme" loading="lazy">
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="security">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="label">Security model</span>
+      <h2>Built on Android's own lock, with the doors you don't need closed.</h2>
+      <p>Phonestick adds no new server and no new protocol. It uses Android's Wireless debugging, which is encrypted and authenticated, and narrows it down.</p>
+    </div>
+    <div class="sec-grid">
+      <div class="sec reveal"><svg><use href="#i-key"/></svg><div><h3>Paired keys only</h3><p>Both sides prove who they are with keys exchanged at pairing. A device on the same Wi-Fi can see an open port but cannot connect.</p></div></div>
+      <div class="sec reveal"><svg><use href="#i-usb"/></svg><div><h3>USB locked off</h3><p>The app keeps USB debugging switched off, so plugging the phone into someone else's computer or a charging kiosk gives no access.</p></div></div>
+      <div class="sec reveal"><svg><use href="#i-wifi"/></svg><div><h3>Approved networks only</h3><p>Access comes back by itself only on Wi-Fi networks you approved. In a café or hotel the app stays silent and nothing is exposed.</p></div></div>
+      <div class="sec reveal"><svg><use href="#i-shield"/></svg><div><h3>Minimal permissions</h3><p>No internet, no location, no accessibility, no notification access. Its one sensitive permission is granted once from your computer and only switches debugging.</p></div></div>
+      <div class="sec reveal"><svg><use href="#i-power"/></svg><div><h3>Off means off</h3><p>With the tile off, Wireless debugging is off and nothing on the phone listens. On the laptop, the connection closes whenever you disconnect.</p></div></div>
+      <div class="sec reveal"><svg><use href="#i-eye-off"/></svg><div><h3>Private apps stay private</h3><p>Phonestick sees shared storage (photos, downloads, documents, media), like a USB cable would. Other apps' private data stays out of reach.</p></div></div>
+    </div>
+  </div>
+</section>
+
+<section id="compare" style="padding-top:10px">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="label">Compared</span>
+      <h2>Why not the usual options?</h2>
+    </div>
+    <div class="reveal" style="overflow-x:auto">
+      <table class="compare">
+        <tr><th></th><th class="us">Phonestick</th><th>USB cable</th><th>Cloud sync apps</th><th>Wi-Fi file server apps</th></tr>
+        <tr><td>Shows up as a real drive in Explorer</td><td class="us yes">Yes</td><td>Media device, not a drive</td><td class="no">No</td><td class="no">Usually not</td></tr>
+        <tr><td>No cable</td><td class="us yes">Yes</td><td class="no">No</td><td class="yes">Yes</td><td class="yes">Yes</td></tr>
+        <tr><td>Files never leave your network</td><td class="us yes">Yes</td><td class="yes">Yes</td><td class="no">No</td><td class="yes">Yes</td></tr>
+        <tr><td>Nothing running on the phone when idle</td><td class="us yes">Yes</td><td class="yes">Yes</td><td class="no">No</td><td class="no">Server keeps running</td></tr>
+        <tr><td>Only your computer can connect</td><td class="us yes">Paired keys</td><td class="yes">Physically</td><td>Your account</td><td class="no">Often just a password</td></tr>
+        <tr><td>Screen mirroring and adb included</td><td class="us yes">Yes</td><td class="no">Separate setup</td><td class="no">No</td><td class="no">No</td></tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section id="install">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="label">Get started</span>
+      <h2>Five minutes, once.</h2>
+    </div>
+    <div class="install">
+      <div class="card reveal">
+        <h3 style="font-size:18px;margin-bottom:12px">1. On Windows</h3>
+        <p style="margin:0 0 12px">Install the helpers (adb, rclone, WinFsp, scrcpy) in one line:</p>
+        <pre>winget install Google.PlatformTools Rclone.Rclone WinFsp.WinFsp Genymobile.scrcpy</pre>
+        <p style="margin:14px 0 0">Then download Phonestick from the <a href="https://github.com/mayerwin/Phonestick/releases/latest">latest release</a>, unzip, and run <code>Phonestick.exe</code>. It sits in the tray.</p>
+      </div>
+      <div class="card reveal">
+        <h3 style="font-size:18px;margin-bottom:12px">2. On the phone</h3>
+        <ol class="clean">
+          <li>Settings › About phone: tap <b>Build number</b> 7 times.</li>
+          <li>Developer options: turn on <b>Disable adb authorization timeout</b> and <b>Wireless debugging</b>.</li>
+          <li>Wireless debugging › <b>Pair device with pairing code</b>. In Phonestick: Settings › <b>Pair with a Wi-Fi code</b>.</li>
+          <li>Choose <b>Set up a phone</b>. The app installs, its tile appears, done.</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="faq" style="padding-top:20px">
+  <div class="wrap" style="max-width:820px">
+    <div class="section-head reveal">
+      <span class="label">Questions</span>
+      <h2>FAQ</h2>
+    </div>
+    <details class="reveal"><summary>Does it need root?</summary><p>No. The phone app gets one permission, granted once from your computer over adb, which lets it switch Wireless debugging on and off.</p></details>
+    <details class="reveal"><summary>Does it use battery or data?</summary><p>No mobile data: everything stays on your Wi-Fi. The phone app never runs in the background; Android wakes it for a moment when Wi-Fi or a debugging switch changes. With the tile off it does nothing at all.</p></details>
+    <details class="reveal"><summary>Why Wireless debugging, and is that safe?</summary><p>It is Android's built-in, encrypted and authenticated way for a trusted computer to reach the phone. Only paired computers can connect. Phonestick keeps it limited to your approved networks and locks USB debugging off.</p></details>
+    <details class="reveal"><summary>How fast is it?</summary><p>On a typical home Wi-Fi, around 10 MB/s, so a 300 MB video copies in about half a minute. Photos and documents open straight from the drive.</p></details>
+    <details class="reveal"><summary>What can my computer see?</summary><p>Shared storage: DCIM, Download, Documents, Pictures, Music, Movies and app media folders, the same things a USB cable shows. Other apps' private data stays private.</p></details>
+    <details class="reveal"><summary>Does it work away from home?</summary><p>It is made for your home network. Access only comes back by itself on networks you approved, and the computer has to be on the same network.</p></details>
+    <details class="reveal"><summary>iPhone? Mac? Linux?</summary><p>Android 11 or newer and Windows 10 or 11 for now. The Windows part is small and open source if you want to port it.</p></details>
+  </div>
+</section>
+
+<section class="final">
+  <div class="wrap">
+    <img src="assets/logo-256.png" alt="Phonestick">
+    <h2>Leave the cable in the drawer.</h2>
+    <p>Free, open source, and small enough to read: two little apps, no services, no accounts.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/mayerwin/Phonestick/releases/latest"><svg><use href="#i-download"/></svg>Download for Windows</a>
+      <a class="btn tonal" href="https://github.com/mayerwin/Phonestick"><svg><use href="#i-github"/></svg>Star on GitHub</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>Phonestick by <a href="https://github.com/mayerwin">Erwin Mayer</a> · MIT licence</span>
+    <span>Not affiliated with Google or Microsoft. Android is a trademark of Google LLC.</span>
+  </div>
+</footer>
+
+<script>
+  // Hero demo: the tile switches access on, the drive appears.
+  const tile = document.getElementById('tile'), sub = document.getElementById('tileSub');
+  const drive = document.getElementById('drive'), toast = document.getElementById('toast'), hint = document.getElementById('hint');
+  let on = false, timer;
+  function set(v){
+    on = v; tile.classList.toggle('on', on); tile.setAttribute('aria-checked', on);
+    sub.textContent = on ? 'Computer access on' : 'Off';
+    clearTimeout(timer);
+    if (on) { timer = setTimeout(() => { drive.classList.add('show'); toast.classList.add('show'); }, 650); }
+    else { drive.classList.remove('show'); toast.classList.remove('show'); }
+  }
+  function toggle(){ hint.classList.add('gone'); set(!on); }
+  tile.addEventListener('click', toggle);
+  tile.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+  // Play it once by itself so the idea lands without a click.
+  setTimeout(() => { if (!on && !hint.classList.contains('gone')) set(true); }, 2200);
+
+  // Light / dark screenshots
+  document.querySelectorAll('.seg button').forEach(b => b.addEventListener('click', () => {
+    document.querySelectorAll('.seg button').forEach(x => x.classList.toggle('on', x === b));
+    document.querySelectorAll('img[data-shot]').forEach(img => img.src = 'screenshots/' + img.dataset.shot + '-' + b.dataset.theme + '.png');
+  }));
+  if (matchMedia('(prefers-color-scheme: dark)').matches) document.querySelector('.seg button[data-theme=dark]').click();
+
+  // Gentle reveal on scroll
+  const io = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } }), { threshold: .12 });
+  document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+</script>
+</body>
+</html>

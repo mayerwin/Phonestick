@@ -1,0 +1,48 @@
+apply plugin: 'com.android.application'
+
+// The sideload key is committed on purpose: every build anyone makes from this
+// repo is signed with the same key, so new APKs install over old ones without
+// an uninstall. It is not a secret and is not used for any store.
+def sideloadKeystore = rootProject.file('sideload.keystore')
+
+android {
+    namespace = 'io.github.mayerwin.phonestick'
+    compileSdk = 36
+
+    defaultConfig {
+        applicationId 'io.github.mayerwin.phonestick'
+        minSdk 30
+        targetSdk 36
+        versionCode 3
+        versionName '0.2.1'
+    }
+
+    signingConfigs {
+        sideload {
+            storeFile sideloadKeystore
+            storePassword 'sideload'
+            keyAlias 'phonestick'
+            keyPassword 'sideload'
+            storeType 'PKCS12'
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.sideload
+        }
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.sideload
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        abortOnError false
+    }
+}

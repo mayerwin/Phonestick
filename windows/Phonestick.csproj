@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- .NET Framework 4.8 ships with Windows 10 and 11: a tiny exe, nothing to install. -->
+    <TargetFramework>net48</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <!-- Product name: change here and in AppInfo.cs to rename. -->
+    <AssemblyName>Phonestick</AssemblyName>
+    <RootNamespace>Phonestick</RootNamespace>
+    <Product>Phonestick</Product>
+    <Copyright>Erwin Mayer, MIT License</Copyright>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\phonestick.ico</ApplicationIcon>
+    <Version>0.2.0</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\*.ico;Assets\*.ttf" LogicalName="Phonestick.Assets.%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="System.IO.Compression" />
+    <Reference Include="System.IO.Compression.FileSystem" />
+    <Reference Include="System.Management" />
+    <Reference Include="System.Net.Http" />
+  </ItemGroup>
+
+  <!-- Ship the phone app next to the exe so "Set up phone" can install it. -->
+  <ItemGroup>
+    <None Include="..\android\app\build\outputs\apk\release\app-release.apk"
+          Link="Phonestick.apk" CopyToOutputDirectory="PreserveNewest"
+          Condition="Exists('..\android\app\build\outputs\apk\release\app-release.apk')" />
+  </ItemGroup>
+
+</Project>

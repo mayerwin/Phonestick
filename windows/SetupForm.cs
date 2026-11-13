@@ -99,6 +99,7 @@ namespace Phonestick
         private void RunSetup()
         {
             var pkg = AppInfo.PhonePackage;
+            Helpers.Ensure(Log);
             Log("Looking for the phone on USB...");
             var p = Phone.FindUsb();
             bool overUsb = p != null;
@@ -110,8 +111,7 @@ namespace Phonestick
             if (p == null) throw new UserError("No phone found. Plug it in with USB debugging on, and allow this computer.");
             Log("Found " + p.Model + " (" + p.SerialNo + ").");
 
-            var apk = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, AppInfo.Name + ".apk");
-            if (!File.Exists(apk)) throw new UserError("The phone app was not found next to this program: " + apk);
+            var apk = Helpers.ExtractApk();
             Log("Installing the phone app...");
             var r = Phone.Adb("-s " + Tools.Q(p.Serial) + " install -r " + Tools.Q(apk), 180000);
             if (!r.Ok || !r.All.Contains("Success")) throw new UserError("Install failed:\r\n" + r.All);
@@ -224,6 +224,7 @@ namespace Phonestick
                     string msg;
                     try
                     {
+                        Helpers.Ensure(m => BeginInvoke(new Action(() => status.Text = m)));
                         Phone.StartServer();
                         var r = Phone.Adb("pair " + Tools.Q(endpoint) + " " + pin, 30000);
                         msg = r.Out.Contains("Successfully paired")

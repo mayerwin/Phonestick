@@ -14,7 +14,7 @@ namespace Phonestick
         public string Model;
 
         public static string AdbExe => Tools.Adb ?? throw new UserError(
-            "adb was not found. Install it with:\nwinget install Google.PlatformTools");
+            "adb was not found. Install it with:\nwinget install Genymobile.scrcpy");
 
         public static RunResult Adb(string args, int timeoutMs = 60000) => Tools.Run(AdbExe, args, timeoutMs);
 

@@ -5,14 +5,53 @@ using System.Linq;
 
 namespace Phonestick
 {
-    /// <summary>Settings stored as key=value lines in %APPDATA%\Phonestick\settings.ini.</summary>
+    /// <summary>
+    /// Settings stored as key=value lines in settings.ini. All of Phonestick's data (settings, log,
+    /// rclone config and cache) lives in a "Phonestick.config" folder next to the exe, so the app
+    /// stays portable: delete the exe and that folder and nothing is left behind.
+    /// </summary>
     internal sealed class Config
     {
-        public static string Dir => Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), AppInfo.Name);
-        public static string LocalDir => Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), AppInfo.Name);
+        private static string _dir;
+        public static string Dir => _dir ?? (_dir = ResolveDir());
+        public static string LocalDir => Dir;
         private static string FilePath => Path.Combine(Dir, "settings.ini");
+
+        /// <summary>The sibling folder, or %LOCALAPPDATA%\Phonestick when the exe sits somewhere read-only.</summary>
+        private static string ResolveDir()
+        {
+            var exeDir = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
+            var sibling = Path.Combine(exeDir, AppInfo.Name + ".config");
+            try
+            {
+                Directory.CreateDirectory(sibling);
+                var probe = Path.Combine(sibling, ".write-test");
+                File.WriteAllText(probe, "");
+                File.Delete(probe);
+                MigrateOld(sibling);
+                return sibling;
+            }
+            catch
+            {
+                return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), AppInfo.Name);
+            }
+        }
+
+        /// <summary>Earlier versions kept settings in %APPDATA%\Phonestick: copy them over once.</summary>
+        private static void MigrateOld(string dir)
+        {
+            try
+            {
+                if (File.Exists(Path.Combine(dir, "settings.ini"))) return;
+                var old = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), AppInfo.Name);
+                foreach (var name in new[] { "settings.ini", "rclone.conf" })
+                {
+                    var src = Path.Combine(old, name);
+                    if (File.Exists(src)) File.Copy(src, Path.Combine(dir, name), false);
+                }
+            }
+            catch { }
+        }
 
         /// <summary>ro.serialno of the phone set up with this computer. Other phones are ignored.</summary>
         public string PhoneSerial { get; set; } = "";

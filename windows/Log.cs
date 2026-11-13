@@ -3,7 +3,7 @@ using System.IO;
 
 namespace Phonestick
 {
-    /// <summary>A small text log in %LOCALAPPDATA%\Phonestick\phonestick.log, for troubleshooting.</summary>
+    /// <summary>A small text log in Phonestick.config\phonestick.log, for troubleshooting.</summary>
     internal static class Log
     {
         private static readonly object Gate = new object();

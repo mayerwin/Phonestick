@@ -68,6 +68,10 @@ namespace Phonestick
                 _cfg.FirstRunDone = true;
                 _cfg.Save();
                 SetAutostart(true);
+                // Fetch the helper programs right away, in the background, so the first
+                // "Open phone files" is quick. Any failure is reported when they are needed.
+                if (!Helpers.AllPresent)
+                    Task.Run(() => { try { Helpers.Ensure(m => Log.Write(m)); } catch (Exception ex) { Log.Write("helpers: " + ex.Message); } });
                 Balloon(AppInfo.Name + " is in the tray",
                     string.IsNullOrEmpty(_cfg.PhoneSerial)
                         ? "Right-click the icon and choose \"Set up phone\" to get started."
@@ -212,6 +216,7 @@ namespace Phonestick
             if (string.IsNullOrEmpty(_cfg.PhoneSerial)) { SetupForm.ShowSetup(this, _cfg); return; }
             Run("Connecting to your phone", log =>
             {
+                Helpers.Ensure(log);
                 var p = FindPhone();
                 _mount.Start(p, _cfg, log);
                 _ui.Post(_ =>
@@ -225,13 +230,9 @@ namespace Phonestick
 
         private void ShowScreen()
         {
-            if (Tools.Scrcpy == null)
-            {
-                MessageBox.Show("scrcpy was not found. Install it with:\nwinget install Genymobile.scrcpy", AppInfo.Name);
-                return;
-            }
             Run("Connecting to your phone", log =>
             {
+                Helpers.Ensure(log);
                 var p = FindPhone();
                 var psi = new ProcessStartInfo(Tools.Scrcpy, "-s " + Tools.Q(p.Serial) + " --window-title " + Tools.Q(p.Model)
                     + " --stay-awake")

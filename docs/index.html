@@ -93,6 +93,8 @@
   .tile.ps{cursor:pointer;transition:background .2s ease, color .2s ease;position:relative}
   .tile.ps.on{background:#C4B5FD;color:#1c1236}
   .tile.ps.on small{color:#3b2a66}
+  .tile.ps{--tw:0}
+  .tile.ps.on{--tw:1}
   .tile.ps:focus-visible{outline:2px solid #C4B5FD;outline-offset:2px}
   .tap-hint{position:absolute;left:16px;top:159px;width:34px;height:34px;border-radius:50%;border:2px solid rgba(196,181,253,.9);animation:tap 2.2s ease-out infinite;pointer-events:none}
   @keyframes tap{0%{transform:scale(.6);opacity:0}25%{opacity:1}100%{transform:scale(1.6);opacity:0}}
@@ -216,6 +218,7 @@
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <defs>
+    <symbol id="i-tile" viewBox="34 34 188 188"><path fill="currentColor" fill-rule="evenodd" d="M100,34H156A22,22 0 0 1 178,56V162A22,22 0 0 1 156,184H100A22,22 0 0 1 78,162V56A22,22 0 0 1 100,34ZM102,48H154A11,11 0 0 1 165,59V149A11,11 0 0 1 154,160H102A11,11 0 0 1 91,149V59A11,11 0 0 1 102,48Z"/><path fill="currentColor" fill-rule="evenodd" d="M108,182H148A6,6 0 0 1 154,188V216A6,6 0 0 1 148,222H108A6,6 0 0 1 102,216V188A6,6 0 0 1 108,182ZM114,194H121A2,2 0 0 1 123,196V203A2,2 0 0 1 121,205H114A2,2 0 0 1 112,203V196A2,2 0 0 1 114,194ZM135,194H142A2,2 0 0 1 144,196V203A2,2 0 0 1 142,205H135A2,2 0 0 1 133,203V196A2,2 0 0 1 135,194Z"/><g style="opacity:var(--tw,0);transition:opacity .2s ease"><path fill="none" stroke="currentColor" stroke-width="10" stroke-linecap="round" d="M100,98 a40,40 0 0 1 56,0M111,114 a24,24 0 0 1 34,0"/><path fill="currentColor" d="M128,124 a7,7 0 1 1 0,14 a7,7 0 1 1 0,-14Z"/></g></symbol>
     <symbol id="i-phone" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></symbol>
     <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
     <symbol id="i-power" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/></symbol>
@@ -253,7 +256,7 @@
       <h1>Your phone,<br>as a <em>USB stick</em>.<br>Over Wi-Fi.</h1>
       <p class="lead">Phonestick puts your Android phone in Windows Explorer as drive <b>P:</b>. No cable, no cloud, no app running in the background. Only your laptop can reach it, and only while the tile is on.</p>
       <div class="cta">
-        <a class="btn primary" href="https://github.com/mayerwin/Phonestick/releases/latest"><svg><use href="#i-download"/></svg>Download for Windows</a>
+        <a class="btn primary" href="https://github.com/mayerwin/Phonestick/releases/latest/download/Phonestick.exe"><svg><use href="#i-download"/></svg>Download for Windows</a>
         <a class="btn tonal" href="https://github.com/mayerwin/Phonestick"><svg><use href="#i-github"/></svg>View the source</a>
       </div>
       <div class="small-print">Windows 10 or 11 · Android 11 or newer · No root · MIT licence</div>
@@ -267,7 +270,7 @@
           <div class="tiles">
             <div class="tile"><svg><use href="#i-wifi"/></svg><div>Wi-Fi<small>Home</small></div></div>
             <div class="tile"><svg><use href="#i-power"/></svg><div>Battery Saver<small>Off</small></div></div>
-            <div class="tile ps" id="tile" role="switch" aria-checked="false" tabindex="0"><svg><use href="#i-phone"/></svg><div>Phonestick<small id="tileSub">Off</small></div></div>
+            <div class="tile ps" id="tile" role="switch" aria-checked="false" tabindex="0"><svg><use href="#i-tile"/></svg><div>Phonestick<small id="tileSub">Off</small></div></div>
             <div class="tile"><svg><use href="#i-eye-off"/></svg><div>Dark theme<small>On</small></div></div>
           </div>
           <span class="tap-hint" id="hint"></span>
@@ -392,9 +395,8 @@
     <div class="install">
       <div class="card reveal">
         <h3 style="font-size:18px;margin-bottom:12px">1. On Windows</h3>
-        <p style="margin:0 0 12px">Install the helpers (adb, rclone, WinFsp, scrcpy) in one line:</p>
-        <pre>winget install Google.PlatformTools Rclone.Rclone WinFsp.WinFsp Genymobile.scrcpy</pre>
-        <p style="margin:14px 0 0">Then download Phonestick from the <a href="https://github.com/mayerwin/Phonestick/releases/latest">latest release</a>, unzip, and run <code>Phonestick.exe</code>. It sits in the tray.</p>
+        <p style="margin:0 0 12px">Download <a href="https://github.com/mayerwin/Phonestick/releases/latest/download/Phonestick.exe"><code>Phonestick.exe</code></a> and run it. That's all: one file, no installer. It sits in the tray.</p>
+        <p style="margin:0">On first run it fetches the free helpers it builds on (scrcpy with adb, rclone, WinFsp) through winget. Windows asks once to allow WinFsp, the driver behind the drive letter. Settings live in a <code>Phonestick.config</code> folder next to the exe.</p>
       </div>
       <div class="card reveal">
         <h3 style="font-size:18px;margin-bottom:12px">2. On the phone</h3>
@@ -431,7 +433,7 @@
     <h2>Leave the cable in the drawer.</h2>
     <p>Free, open source, and small enough to read: two little apps, no services, no accounts.</p>
     <div class="cta">
-      <a class="btn primary" href="https://github.com/mayerwin/Phonestick/releases/latest"><svg><use href="#i-download"/></svg>Download for Windows</a>
+      <a class="btn primary" href="https://github.com/mayerwin/Phonestick/releases/latest/download/Phonestick.exe"><svg><use href="#i-download"/></svg>Download for Windows</a>
       <a class="btn tonal" href="https://github.com/mayerwin/Phonestick"><svg><use href="#i-github"/></svg>Star on GitHub</a>
     </div>
   </div>

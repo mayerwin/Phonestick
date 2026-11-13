@@ -15,7 +15,9 @@
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\phonestick.ico</ApplicationIcon>
-    <Version>0.2.0</Version>
+    <Version>0.3.0</Version>
+    <!-- A single file: no Phonestick.exe.config (.NET Framework 4.8 runs the exe without it). -->
+    <GenerateSupportedRuntime>false</GenerateSupportedRuntime>
   </PropertyGroup>
 
   <ItemGroup>
@@ -29,10 +31,10 @@
     <Reference Include="System.Net.Http" />
   </ItemGroup>
 
-  <!-- Ship the phone app next to the exe so "Set up phone" can install it. -->
+  <!-- The phone app is embedded in the exe, so the release is a single file. -->
   <ItemGroup>
-    <None Include="..\android\app\build\outputs\apk\release\app-release.apk"
-          Link="Phonestick.apk" CopyToOutputDirectory="PreserveNewest"
+    <EmbeddedResource Include="..\android\app\build\outputs\apk\release\app-release.apk"
+          LogicalName="Phonestick.Assets.Phonestick.apk"
           Condition="Exists('..\android\app\build\outputs\apk\release\app-release.apk')" />
   </ItemGroup>
 

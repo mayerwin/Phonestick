@@ -87,7 +87,7 @@ It also gives your computer a proper link to the phone: mirror its screen with o
 
 ## 🚀 Get started
 
-Five minutes, once.
+Quick to set up, nothing to maintain.
 
 **On Windows**
 

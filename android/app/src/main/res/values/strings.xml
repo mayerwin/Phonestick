@@ -2,7 +2,7 @@
 <resources>
     <!-- The product name. Change it here (and in the Windows AppInfo.cs) to rename. -->
     <string name="app_name">Phonestick</string>
-    <string name="tagline">Your phone as a USB stick, over Wi-Fi. Only for your laptop, only when you want.</string>
+    <string name="tagline">Your phone as a USB stick, over Wi-Fi. Only for your PC, only when you want.</string>
     <string name="tagline_short">Your phone as a USB stick, over Wi-Fi</string>
 
     <string name="tile_label">@string/app_name</string>

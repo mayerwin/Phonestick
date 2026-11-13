@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Your Android phone as a USB stick. Over Wi-Fi.</strong><br>
-  Only your laptop can reach it, and only while the tile is on.
+  Only your PC can reach it, and only while the tile is on.
 </p>
 
 <p align="center">
@@ -43,11 +43,11 @@ It also gives your computer a proper link to the phone: mirror its screen with o
   <tr>
     <td width="33%" valign="top">
       <h3>🔐 Only your computer</h3>
-      The link is encrypted and needs a key only your paired laptop holds. USB debugging stays locked off, so another computer or a public charging port gets nothing.
+      The link is encrypted and needs a key only your paired PC holds. USB debugging stays locked off, so another computer or a public charging port gets nothing.
     </td>
     <td width="33%" valign="top">
       <h3>🎚️ Only when you want</h3>
-      One Quick Settings tile. On: your laptop can connect, on the Wi-Fi networks you approved. Off: nothing on the phone is listening.
+      One Quick Settings tile. On: your PC can connect, on the Wi-Fi networks you approved. Off: nothing on the phone is listening.
     </td>
     <td width="33%" valign="top">
       <h3>🔋 Zero background cost</h3>
@@ -61,7 +61,7 @@ It also gives your computer a proper link to the phone: mirror its screen with o
     </td>
     <td width="33%" valign="top">
       <h3>🏠 Stays on your network</h3>
-      Files go straight from phone to laptop over your own Wi-Fi. No relay, no upload, no mobile data.
+      Files go straight from phone to PC over your own Wi-Fi. No relay, no upload, no mobile data.
     </td>
     <td width="33%" valign="top">
       <h3>🪶 Out of your way</h3>
@@ -128,7 +128,7 @@ Phonestick adds no new server and no new protocol. It uses Android's own Wireles
 | **Paired keys only** | Wireless debugging uses TLS with mutual authentication. A device on the same Wi-Fi can see an open port but cannot connect without a trusted key. Adding a new computer needs the 6-digit code shown on the unlocked phone. |
 | **USB locked off** | The app keeps USB debugging off, so someone else's computer or a charging kiosk gets nothing. You can allow it again in the app. |
 | **Approved networks only** | Access comes back by itself only on Wi-Fi networks you approved. In a café or hotel the app stays silent. |
-| **Off means off** | With the tile off, Wireless debugging is off and nothing on the phone listens. The laptop closes its connection whenever you disconnect. |
+| **Off means off** | With the tile off, Wireless debugging is off and nothing on the phone listens. The PC closes its connection whenever you disconnect. |
 | **Minimal permissions** | `WRITE_SECURE_SETTINGS` (granted once over adb, only to switch debugging), `ACCESS_NETWORK_STATE`, `RECEIVE_BOOT_COMPLETED`, `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`. No internet, location, accessibility or notification access. |
 | **Private apps stay private** | The drive shows shared storage (DCIM, Download, Documents, media), like a USB cable. Other apps' private data stays out of reach. |
 | **Your computer's key** | `%USERPROFILE%\.android\adbkey`. Anyone who copies it can act as your computer, so it is protected like the rest of your Windows account. Setup disables Android's 7-day authorization timeout; revoke it any time in Developer options. |

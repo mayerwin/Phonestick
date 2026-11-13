@@ -201,11 +201,12 @@
     nav .links a:not(.keep){display:none}
   }
   @media (max-width: 520px){
-    .demo{height:600px}
-    .explorer{width:100%;top:0}
-    .phone{width:200px;height:350px;top:240px}
-    .toast{top:auto;bottom:0;width:100%}
-    .tap-hint{left:14px;top:150px}
+    .demo{height:auto;display:flex;flex-direction:column;gap:16px}
+    .explorer,.phone,.toast{position:relative;left:auto;right:auto;top:auto;bottom:auto}
+    .explorer{width:100%;order:2}
+    .phone{width:236px;height:400px;margin:0 auto;order:1}
+    .toast{width:100%;order:3;display:none;transform:none}
+    .toast.show{display:flex}
     .panels,.phone-shot{grid-template-columns:1fr}
     .compare th,.compare td{padding:12px 10px;font-size:13.5px}
   }

@@ -26,15 +26,17 @@ namespace Phonestick
                 return 0;
             }
 
+            // Never the .NET crash dialog: errors on other threads are logged too.
+            AppDomain.CurrentDomain.UnhandledException += (s, e) => Log.Write("Fatal error: " + e.ExceptionObject);
+            System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (s, e) => { Log.Write("Background error: " + e.Exception); e.SetObserved(); };
+
             // Internal: started by the updater. Wait for the previous process to exit (it holds the
-            // tray mutex), then empty the update folder that holds the previous exe.
+            // tray mutex). The update folder that holds the previous exe is emptied below.
             int au = Array.IndexOf(args, "--after-update");
             if (au >= 0 && au + 1 < args.Length && int.TryParse(args[au + 1], out var oldPid))
             {
                 try { using (var old = System.Diagnostics.Process.GetProcessById(oldPid)) old.WaitForExit(20000); } catch { }
-                TrayApp.JustUpdated = true;
             }
-            Updater.Cleanup();
 
             bool open = args.Any(a => a.Equals("--open", StringComparison.OrdinalIgnoreCase));
             using (var openSignal = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\" + AppInfo.Name + "-open"))
@@ -46,6 +48,12 @@ namespace Phonestick
                     if (open) openSignal.Set();
                     return 0;
                 }
+                // Only the instance that owns the tray: another start (a shortcut, autostart) must
+                // not empty the update folder while this one downloads into it.
+                Updater.Cleanup();
+                // A drive left mounted by a Phonestick that was killed blocks the letter: end it
+                // before anything can mount.
+                Mount.KillStale();
                 // A tray app must never show the .NET crash dialog: log a UI-thread error and keep going.
                 Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
                 Application.ThreadException += (s, e) => Log.Write("Unexpected error: " + e.Exception);

@@ -127,7 +127,7 @@ Phonestick adds no new server and no new protocol. It uses Android's own Wireles
 |---|---|
 | **Paired keys only** | Wireless debugging uses TLS with mutual authentication. A device on the same Wi-Fi can see an open port but cannot connect without a trusted key. Adding a new computer needs the 6-digit code shown on the unlocked phone. |
 | **USB locked off** | The app keeps USB debugging off, so someone else's computer or a charging kiosk gets nothing. You can allow it again in the app. |
-| **Approved networks only** | Access comes back by itself only on Wi-Fi networks you approved. In a café or hotel the app stays silent. |
+| **Approved networks only** | Access comes back by itself only on Wi-Fi networks you approved. Elsewhere the app stays silent. A network that happens to use the same addresses as yours still gets Android's own "Allow wireless debugging on this network?" question first, and only your paired PC could connect anyway. |
 | **Off means off** | With the tile off, Wireless debugging is off and nothing on the phone listens. The PC closes its connection whenever you disconnect. |
 | **Minimal permissions** | `WRITE_SECURE_SETTINGS` (granted once over adb, only to switch debugging), `ACCESS_NETWORK_STATE`, `RECEIVE_BOOT_COMPLETED`, `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`. No internet, location, accessibility or notification access. |
 | **Private apps stay private** | The drive shows shared storage (DCIM, Download, Documents, media), like a USB cable. Other apps' private data stays out of reach. |
@@ -175,7 +175,7 @@ Phonestick adds no new server and no new protocol. It uses Android's own Wireles
 
 **iPhone? Mac? Linux?** Android 11 or newer and Windows 10 or 11 for now. Both parts are small and open source if you want to port them.
 
-**How do updates work?** Once a month Phonestick asks GitHub whether a new version is out. If so, it says so in its panel and tray menu, never in a popup. One click installs it (downloaded, checked against its published SHA-256, swapped in place, restarted). Turn the check off in Settings, or check any time from there.
+**How do updates work?** Once a month Phonestick asks GitHub whether a new version is out. If so, it says so in its panel and tray menu, never in a popup. One click installs it (downloaded, checked against its published SHA-256, swapped in place, restarted). The phone app comes with it: the PC brings it up to date the next time it connects. Turn the check off in Settings, or check any time from there.
 
 **Can I still use adb myself?** Yes. With the tile on, `adb mdns services` and `adb connect` reach the phone as usual.
 

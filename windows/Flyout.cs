@@ -54,6 +54,10 @@ namespace Phonestick
     internal sealed class Flyout : Form
     {
         public static Flyout Current;
+        /// <summary>Only a connect can be cancelled (not an update or a disconnect).</summary>
+        private bool Cancellable => _s.Busy && _s.BusyText == "Connecting...";
+        /// <summary>When the panel last closed: a click on the tray icon that closed it must not reopen it.</summary>
+        public static int LastClosedTick = Environment.TickCount - 100000;
         /// <summary>Keeps the panel open when it loses focus (Phonestick.exe --panel-stay, for screenshots).</summary>
         public static bool StayOpen;
 
@@ -107,7 +111,7 @@ namespace Phonestick
             bool hadFocus = false;
             Activated += (o, e) => hadFocus = true;
             Deactivate += (o, e) => { if (hadFocus && !StayOpen) Close(); };
-            FormClosed += (o, e) => { if (Current == this) Current = null; _logo.Dispose(); };
+            FormClosed += (o, e) => { if (Current == this) Current = null; LastClosedTick = Environment.TickCount; _logo.Dispose(); };
         }
 
         /// <summary>Called by the tray app when the state changes while the panel is open.</summary>
@@ -156,8 +160,8 @@ namespace Phonestick
             _buttons.Add(new Btn
             {
                 // Always possible while something is connected or connecting: it also cancels.
-                R = new RectangleF(inner + half + 8, y, half, 36), Text = _s.Busy && !_s.Connected ? "Cancel" : "Disconnect", Icon = Glyphs.Unplug,
-                Enabled = _s.Busy || _s.Connected, Click = () => _host.Disconnect(),
+                R = new RectangleF(inner + half + 8, y, half, 36), Text = Cancellable && !_s.Connected ? "Cancel" : "Disconnect", Icon = Glyphs.Unplug,
+                Enabled = Cancellable || (!_s.Busy && _s.Connected), Click = () => _host.Disconnect(),
             });
             _cardBottom = y + 36 + 16;
             _height = _cardBottom + 12 + 18 + 12;

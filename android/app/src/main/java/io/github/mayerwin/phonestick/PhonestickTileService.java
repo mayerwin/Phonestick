@@ -22,6 +22,7 @@ public class PhonestickTileService extends TileService {
     @Override
     public void onStartListening() {
         new Prefs(this).tileAdded(true); // also true for tiles added before this callback existed
+        Access.tileShown(this);
         update();
     }
 
@@ -29,6 +30,12 @@ public class PhonestickTileService extends TileService {
     @SuppressWarnings("deprecation")
     @android.annotation.SuppressLint("StartActivityAndCollapseDeprecated") // only used below API 34
     public void onClick() {
+        // Switching off always works, even locked or without the permission.
+        if (new Prefs(this).armed()) {
+            Access.disarm(this);
+            update();
+            return;
+        }
         if (!Adb.canWrite(this)) {
             // Not set up yet: open the app, which explains the one-time setup.
             Intent i = new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -39,8 +46,12 @@ public class PhonestickTileService extends TileService {
             }
             return;
         }
-        if (new Prefs(this).armed()) Access.disarm(this);
-        else Access.arm(this);
+        // Switching on approves the current network: ask for the unlock first.
+        if (isLocked()) {
+            unlockAndRun(() -> { Access.arm(this); update(); });
+            return;
+        }
+        Access.arm(this);
         update();
     }
 

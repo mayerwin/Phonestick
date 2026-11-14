@@ -73,6 +73,7 @@
                 <action android:name="${applicationId}.ARM" />
                 <action android:name="${applicationId}.DISARM" />
                 <action android:name="${applicationId}.STATUS" />
+                <action android:name="${applicationId}.LOG" />
             </intent-filter>
         </receiver>
     </application>

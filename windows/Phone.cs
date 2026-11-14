@@ -21,12 +21,36 @@ namespace Phonestick
         public RunResult Shell(string cmd, int timeoutMs = 60000) =>
             Adb("-s " + Tools.Q(Serial) + " shell " + Tools.Q(cmd), timeoutMs);
 
-        public static void StartServer() => Adb("start-server", 30000);
+        /// <summary>Starting and stopping the shared adb server never overlap.</summary>
+        private static readonly object Gate = new object();
+
+        /// <summary>True while anything still needs the adb server (set by the tray app).</summary>
+        public static Func<bool> InUse = () => false;
+
+        public static void StartServer() { lock (Gate) Adb("start-server", 30000); }
 
         /// <summary>Stops our private adb server: every connection to the phone closes.</summary>
         public static void StopServer()
         {
-            try { if (Tools.Adb != null) Adb("kill-server", 15000); } catch { }
+            lock (Gate)
+            {
+                try { if (Tools.Adb != null) Adb("kill-server", 15000); } catch { }
+            }
+        }
+
+        /// <summary>
+        /// Stops the adb server when nothing uses it any more (a mount or a screen session ended).
+        /// Checked under the same lock as StartServer, so a connect that just began is never cut.
+        /// </summary>
+        public static void StopServerIfUnused()
+        {
+            lock (Gate)
+            {
+                bool used;
+                try { used = InUse(); } catch { used = true; }
+                if (used) return;
+                try { if (Tools.Adb != null) Adb("kill-server", 15000); } catch { }
+            }
         }
 
         /// <summary>Devices in state "device", with their transport serial and whether they are USB.</summary>
@@ -129,6 +153,30 @@ namespace Phonestick
                 "case \"$k\" in *'|android|62|'*) hit=1;; *) hit=$(cmd notification get \"$k\" 2>/dev/null | grep -c -i -e DEVELOPER_IMPORTANT -e 'wireless debugging');; esac; " +
                 "[ \"$hit\" != 0 ] && [ -n \"$hit\" ] && cmd notification snooze --for 86400000 \"$k\" >/dev/null 2>&1; done; true";
             try { Shell(script, 15000); } catch { }
+        }
+
+        private static bool _appChecked;
+
+        /// <summary>
+        /// Brings the phone app up to the version built into this exe, once per run, so phone-side
+        /// fixes arrive with the PC update. Never fails a connect: problems are only logged.
+        /// </summary>
+        public void EnsureAppCurrent(Action<string> log)
+        {
+            if (_appChecked) return;
+            try
+            {
+                var o = Shell("dumpsys package " + AppInfo.PhonePackage + " | grep versionCode", 15000).Out;
+                var m = Regex.Match(o, @"versionCode=(\d+)");
+                if (!m.Success) return; // not installed, or unreadable: setup installs it
+                _appChecked = true;
+                int have = int.Parse(m.Groups[1].Value);
+                if (have >= AppInfo.PhoneAppVersion) return;
+                log("Updating the phone app...");
+                var r = Adb("-s " + Tools.Q(Serial) + " install -r " + Tools.Q(Helpers.ExtractApk()), 180000);
+                Log.Write("phone app " + have + " -> " + AppInfo.PhoneAppVersion + ": " + (r.All.Contains("Success") ? "updated" : r.All));
+            }
+            catch (Exception ex) { Log.Write("phone app check: " + ex.Message); }
         }
 
         public void Disconnect()

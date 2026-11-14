@@ -73,10 +73,13 @@ namespace Phonestick
             try
             {
                 if (!File.Exists(FilePath)) return c;
-                var d = File.ReadAllLines(FilePath)
-                    .Select(l => l.Split(new[] { '=' }, 2))
-                    .Where(p => p.Length == 2)
-                    .ToDictionary(p => p[0].Trim(), p => p[1].Trim(), StringComparer.OrdinalIgnoreCase);
+                // Last value wins: a key twice (hand edit, sync conflict) must not reset everything.
+                var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var l in File.ReadAllLines(FilePath))
+                {
+                    var p = l.Split(new[] { '=' }, 2);
+                    if (p.Length == 2) d[p[0].Trim()] = p[1].Trim();
+                }
                 if (d.TryGetValue("PhoneSerial", out var s)) c.PhoneSerial = s;
                 if (d.TryGetValue("PhoneModel", out var m)) c.PhoneModel = m;
                 if (d.TryGetValue("LastEndpoint", out var le)) c.LastEndpoint = le;
@@ -91,21 +94,46 @@ namespace Phonestick
             return c;
         }
 
+        private static readonly object SaveLock = new object();
+
+        /// <summary>
+        /// Writes settings.ini. Safe from any thread, and never leaves a half-written file: the new
+        /// content goes to a temp file that then replaces the old one. A locked file (sync tool,
+        /// antivirus) is retried briefly; a save that still fails is logged, never thrown.
+        /// </summary>
         public void Save()
         {
-            Directory.CreateDirectory(Dir);
-            var lines = new List<string>
+            lock (SaveLock)
             {
-                "PhoneSerial=" + PhoneSerial,
-                "PhoneModel=" + PhoneModel,
-                "LastEndpoint=" + LastEndpoint,
-                "Drive=" + Drive,
-                "IdleMinutes=" + IdleMinutes,
-                "FirstRunDone=" + (FirstRunDone ? "1" : "0"),
-                "CheckUpdates=" + (CheckUpdates ? "1" : "0"),
-                "LastUpdateCheck=" + LastUpdateCheck.Ticks,
-            };
-            File.WriteAllLines(FilePath, lines);
+                var lines = new List<string>
+                {
+                    "PhoneSerial=" + PhoneSerial,
+                    "PhoneModel=" + PhoneModel,
+                    "LastEndpoint=" + LastEndpoint,
+                    "Drive=" + Drive,
+                    "IdleMinutes=" + IdleMinutes,
+                    "FirstRunDone=" + (FirstRunDone ? "1" : "0"),
+                    "CheckUpdates=" + (CheckUpdates ? "1" : "0"),
+                    "LastUpdateCheck=" + LastUpdateCheck.Ticks,
+                };
+                for (int attempt = 0; ; attempt++)
+                {
+                    try
+                    {
+                        Directory.CreateDirectory(Dir);
+                        var tmp = FilePath + ".tmp";
+                        File.WriteAllLines(tmp, lines);
+                        if (File.Exists(FilePath)) File.Replace(tmp, FilePath, null);
+                        else File.Move(tmp, FilePath);
+                        return;
+                    }
+                    catch (Exception ex)
+                    {
+                        if (attempt >= 4) { Log.Write("settings not saved: " + ex.Message); return; }
+                        System.Threading.Thread.Sleep(100);
+                    }
+                }
+            }
         }
     }
 }

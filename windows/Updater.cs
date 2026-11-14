@@ -31,7 +31,8 @@ namespace Phonestick
         public static string CurrentText => Current.ToString(3);
 
         private static string Dir => Path.Combine(Config.Dir, "update");
-        private static string ExePath => Process.GetCurrentProcess().MainModule.FileName;
+        /// <summary>Where this exe was started from (fixed at start: it does not follow the moves below).</summary>
+        private static readonly string ExePath = System.Windows.Forms.Application.ExecutablePath;
 
         internal sealed class Info
         {
@@ -91,13 +92,14 @@ namespace Phonestick
             catch (Exception ex) { reason = ex.Message; return false; }
         }
 
-        /// <summary>Downloads and verifies the new exe, then swaps it in. The caller starts it and exits.</summary>
-        public static void Install(Info info, Action<string> log)
+        private static string Fresh => Path.Combine(Dir, Asset);
+        private static string Old => Path.Combine(Dir, AppInfo.Name + ".old.exe");
+
+        /// <summary>Downloads and verifies the new exe into the update folder. Changes nothing else.</summary>
+        public static void Download(Info info, Action<string> log)
         {
-            var exe = ExePath;
             Directory.CreateDirectory(Dir);
-            var fresh = Path.Combine(Dir, Asset);
-            var old = Path.Combine(Dir, AppInfo.Name + ".old.exe");
+            var fresh = Fresh;
             if (File.Exists(fresh)) File.Delete(fresh);
 
             log("Downloading " + AppInfo.Name + " " + info.VersionText + "...");
@@ -118,17 +120,53 @@ namespace Phonestick
                 }
                 File.WriteAllBytes(fresh, bytes);
             }
+        }
 
+        /// <summary>
+        /// Swaps the downloaded exe in. A running exe cannot be overwritten but can be moved.
+        /// Each move is retried (antivirus often holds a freshly written exe for a moment), and
+        /// on failure the original exe is always put back, by copy if it cannot be moved.
+        /// </summary>
+        public static void Swap(Info info, Action<string> log)
+        {
             log("Installing...");
-            if (File.Exists(old)) File.Delete(old); // fails only if an old process still runs
-            File.Move(exe, old);
-            try { File.Move(fresh, exe); }
+            var exe = ExePath;
+            var fresh = Fresh;
+            var old = Old;
+            if (File.Exists(old)) Retry(() => File.Delete(old)); // fails only if an old process still runs
+            Retry(() => File.Move(exe, old));
+            try { Retry(() => File.Move(fresh, exe)); }
             catch
             {
-                try { File.Move(old, exe); } catch { }
+                PutBack(exe, old);
                 throw;
             }
             Log.Write("updated to " + info.VersionText);
+        }
+
+        /// <summary>Undoes Swap: the previous exe goes back in place (the new one returns to the update folder).</summary>
+        public static void Rollback()
+        {
+            var exe = ExePath;
+            try { if (File.Exists(exe) && File.Exists(Old)) { if (File.Exists(Fresh)) File.Delete(Fresh); Retry(() => File.Move(exe, Fresh)); } }
+            catch (Exception ex) { Log.Write("rollback: " + ex.Message); }
+            PutBack(exe, Old);
+        }
+
+        private static void PutBack(string exe, string old)
+        {
+            if (File.Exists(exe) || !File.Exists(old)) return;
+            try { Retry(() => File.Move(old, exe)); return; } catch { }
+            try { File.Copy(old, exe); } catch (Exception ex) { Log.Write("could not restore the previous exe: " + ex.Message + " (it is in " + old + ")"); }
+        }
+
+        private static void Retry(Action a)
+        {
+            for (int i = 0; ; i++)
+            {
+                try { a(); return; }
+                catch when (i < 9) { System.Threading.Thread.Sleep(300); }
+            }
         }
 
         /// <summary>Starts the new exe; it waits for this process to exit before taking over the tray.</summary>
@@ -138,7 +176,7 @@ namespace Phonestick
             {
                 UseShellExecute = false,
                 WorkingDirectory = Path.GetDirectoryName(ExePath),
-            });
+            }).Dispose();
         }
 
         /// <summary>Empties the update folder (the previous exe and any partial download). Called at start.</summary>

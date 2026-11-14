@@ -35,6 +35,13 @@ final class Net {
     /** The current Wi-Fi network, or null. */
     static Network currentWifi(Context c) {
         ConnectivityManager cm = c.getSystemService(ConnectivityManager.class);
+        // Prefer the network Android routes through: during a switch, or with a second
+        // (local-only) Wi-Fi such as a camera's setup hotspot, the list can hold several.
+        Network active = cm.getActiveNetwork();
+        if (active != null) {
+            NetworkCapabilities ac = cm.getNetworkCapabilities(active);
+            if (ac != null && ac.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return active;
+        }
         for (Network n : cm.getAllNetworks()) {
             NetworkCapabilities nc = cm.getNetworkCapabilities(n);
             if (nc != null && nc.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return n;

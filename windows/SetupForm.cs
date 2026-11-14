@@ -69,15 +69,31 @@ namespace Phonestick
             HandleCreated += (s, e) => Theme.ApplyChrome(this);
         }
 
+        /// <summary>Setup or pairing is running: they use the adb server, which must not be stopped meanwhile.</summary>
+        private static int _running;
+        public static bool Busy => Volatile.Read(ref _running) > 0;
+        internal static void BeginWork() => Interlocked.Increment(ref _running);
+        internal static void EndWork() => Interlocked.Decrement(ref _running);
+
+        /// <summary>Runs on the window's thread if it is still open; otherwise does nothing.</summary>
+        internal static void OnUi(Control c, Action a)
+        {
+            try { if (!c.IsDisposed && c.IsHandleCreated) c.BeginInvoke(a); } catch { }
+        }
+
         private void Log(string s)
         {
-            if (InvokeRequired) { BeginInvoke(new Action(() => Log(s))); return; }
-            _log.AppendText(s + "\r\n");
+            Phonestick.Log.Write("setup: " + s.Trim());
+            // The window may have been closed while setup goes on: then only the log file gets it.
+            if (InvokeRequired || !IsHandleCreated) { OnUi(this, () => { if (!_log.IsDisposed) _log.AppendText(s + "\r\n"); }); return; }
+            if (!_log.IsDisposed) _log.AppendText(s + "\r\n");
         }
 
         private void Start()
         {
+            if (Busy) { Log("Wait: a setup or pairing is still running."); return; }
             _start.Enabled = false;
+            BeginWork();
             Task.Run(() =>
             {
                 try
@@ -91,7 +107,9 @@ namespace Phonestick
                 }
                 finally
                 {
-                    BeginInvoke(new Action(() => { _start.Enabled = true; _start.Text = "Run again"; }));
+                    EndWork();
+                    Phone.StopServerIfUnused();
+                    OnUi(this, () => { _start.Enabled = true; _start.Text = "Run again"; });
                 }
             });
         }
@@ -177,7 +195,6 @@ namespace Phonestick
             Log("- Unplug the phone.");
             Log("- Tile on: this computer can reach the phone on this Wi-Fi. Tile off: nothing can.");
             Log("- Open your files from the tray icon: Open phone files.");
-            Phone.StopServer();
         }
     }
 
@@ -215,16 +232,18 @@ namespace Phonestick
             var cancel = new Button { Left = 400, Top = 210, Width = 90, Text = "Close", DialogResult = DialogResult.Cancel };
             ok.Click += (s, e) =>
             {
+                if (SetupForm.Busy) { status.Text = "Wait: a setup is still running."; return; }
                 ok.Enabled = false;
                 status.Text = "Pairing...";
                 var endpoint = ep.Text.Trim();
                 var pin = new string(code.Text.Where(char.IsDigit).ToArray());
+                SetupForm.BeginWork();
                 Task.Run(() =>
                 {
                     string msg;
                     try
                     {
-                        Helpers.Ensure(m => BeginInvoke(new Action(() => status.Text = m)));
+                        Helpers.Ensure(m => SetupForm.OnUi(this, () => status.Text = m));
                         Phone.StartServer();
                         var r = Phone.Adb("pair " + Tools.Q(endpoint) + " " + pin, 30000);
                         msg = r.Out.Contains("Successfully paired")
@@ -232,7 +251,8 @@ namespace Phonestick
                             : "Pairing failed: " + r.All;
                     }
                     catch (Exception ex) { msg = ex.Message; }
-                    BeginInvoke(new Action(() => { status.Text = msg; ok.Enabled = true; }));
+                    finally { SetupForm.EndWork(); }
+                    SetupForm.OnUi(this, () => { status.Text = msg; ok.Enabled = true; });
                 });
             };
             Controls.AddRange(new Control[] { help, l1, ep, l2, code, status, ok, cancel });

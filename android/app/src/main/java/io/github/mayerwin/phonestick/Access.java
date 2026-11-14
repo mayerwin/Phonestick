@@ -51,7 +51,7 @@ final class Access {
     /** Ignore setting changes this soon after our own write (ours, or Android refusing it). */
     private static final long QUIET_MS = 10_000;
     /** Safety cap: at most this many writes per network connection per window. */
-    private static final int MAX_ATTEMPTS = 6;
+    private static final int MAX_ATTEMPTS = 4;
     private static final long ATTEMPT_WINDOW_MS = 10 * 60_000;
     private static final long SETTLE_MS = 3_000;
 
@@ -73,7 +73,8 @@ final class Access {
         p.log("switched on" + (n == null ? " (no Wi-Fi now)" : " on " + Net.label(c, n)));
         if (n != null) {
             String fp = Net.fingerprint(c, n);
-            if (fp != null && !p.isApproved(Net.fingerprints(c, n))) {
+            if (fp == null) p.log("this network could not be identified (no IPv4 address yet), not approved");
+            else if (!p.isApproved(Net.fingerprints(c, n))) {
                 p.approve(fp, Net.label(c, n));
                 p.log("network approved");
             }
@@ -86,16 +87,17 @@ final class Access {
         refreshTile(c);
     }
 
+    /** Works even without the permission, so the tile can always be switched off. */
     static void disarm(Context c) {
         Prefs p = new Prefs(c);
         p.armed(false);
-        p.log("switched off");
         unregisterNetCallback(c);
         JobScheduler js = c.getSystemService(JobScheduler.class);
         js.cancel(JOB_WIFI_WATCH);
         js.cancel(JOB_ENSURE);
         js.cancel(JOB_SAFETY);
-        Adb.put(c, Adb.WIFI, 0);
+        boolean ok = Adb.put(c, Adb.WIFI, 0);
+        p.log("switched off" + (ok ? "" : ": could not switch Wireless debugging off (permission missing), switch it off in Developer options"));
         refreshTile(c);
     }
 
@@ -104,12 +106,47 @@ final class Access {
         Prefs p = new Prefs(c);
         c.getSystemService(JobScheduler.class).cancel(JOB_PROBE_OLD);
         if (p.armed()) {
-            registerNetCallback(c);
-            scheduleWifiWatch(c);
+            rehook(c);
             scheduleSafety(c);
             scheduleEnsure(c, SETTLE_MS);
+        } else if (Adb.canWrite(c)) {
+            // Off means off, also after a crash between "switched off" and the write.
+            Adb.put(c, Adb.WIFI, 0);
         }
         if (p.lockdownActive()) enforceUsb(c);
+    }
+
+    /** True once this process registered the network callback (a force-stop removes it). */
+    private static boolean netHooked;
+
+    /**
+     * Puts back the hooks a force-stop or an aggressive battery saver removes, without
+     * disturbing the ones still in place.
+     */
+    static void rehook(Context c) {
+        if (!new Prefs(c).armed()) return;
+        if (!netHooked) registerNetCallback(c);
+        if (c.getSystemService(JobScheduler.class).getPendingJob(JOB_WIFI_WATCH) == null) scheduleWifiWatch(c);
+    }
+
+    /**
+     * Quick Settings opened: make sure the hooks are there and wireless debugging is on
+     * (since Android 17 apps are not told when Android switches it off). Quiet, at most
+     * once a minute, and not counted as a retry.
+     */
+    static void tileShown(Context c) {
+        Prefs p = new Prefs(c);
+        if (!p.armed() || !Adb.canWrite(c)) return;
+        rehook(c);
+        if (p.lockdownActive()) enforceUsb(c);
+        long now = System.currentTimeMillis();
+        long since = now - p.lastWriteAt();
+        if (since >= 0 && since < 60_000) return;
+        Network n = Net.currentWifi(c);
+        if (n == null || !p.isApproved(Net.fingerprints(c, n))) return;
+        if (p.attemptHandle() == n.getNetworkHandle() && p.attemptCount() > MAX_ATTEMPTS) return; // Android refuses here
+        p.lastWriteAt(now);
+        if (!Adb.put(c, Adb.WIFI, 1)) p.log("tile shown: wireless debugging on FAILED");
     }
 
     static void setAllowUsb(Context c, boolean allow) {
@@ -157,7 +194,14 @@ final class Access {
             return;
         }
 
-        int count = (p.attemptHandle() == h && now - p.attemptAt() < ATTEMPT_WINDOW_MS) ? p.attemptCount() : 0;
+        // Within one connection the count resets after the window (Android's idle auto-off
+        // over hours is normal), except once we gave up: Android keeps refusing on this
+        // network (for example its own "Allow on this network?" was declined), so stay
+        // quiet until the next connection or until access is switched on again.
+        boolean same = p.attemptHandle() == h;
+        if (same && p.attemptCount() > MAX_ATTEMPTS) return;
+        long age = now - p.attemptAt();
+        int count = (same && age >= 0 && age < ATTEMPT_WINDOW_MS) ? p.attemptCount() : 0;
         if (count >= MAX_ATTEMPTS) {
             if (count == MAX_ATTEMPTS) p.log(why + ": gave up for this connection (Android keeps refusing)");
             p.attempt(h, p.attemptAt(), count + 1);
@@ -245,9 +289,11 @@ final class Access {
     static void registerNetCallback(Context c) {
         c.getSystemService(ConnectivityManager.class)
                 .registerNetworkCallback(Net.wifiRequest(), netIntent(c));
+        netHooked = true;
     }
 
     static void unregisterNetCallback(Context c) {
+        netHooked = false;
         try {
             c.getSystemService(ConnectivityManager.class).unregisterNetworkCallback(netIntent(c));
         } catch (IllegalArgumentException ignored) {

@@ -122,7 +122,15 @@ public class MainActivity extends Activity {
             root.addView(label(getString(R.string.checklist_title)));
             LinearLayout c = card();
             if (!tileOk) c.addView(row(R.drawable.ic_l_plus, getString(R.string.check_tile), getString(R.string.check_tile_help),
-                    button(getString(R.string.add), true, v -> { new Prefs(this).askedTile(false); maybeAskForTile(); })));
+                    button(getString(R.string.add), true, v -> {
+                        if (Build.VERSION.SDK_INT < 33) {
+                            // No "add tile" prompt before Android 13: say how instead.
+                            android.widget.Toast.makeText(this, R.string.add_tile_manual, android.widget.Toast.LENGTH_LONG).show();
+                            return;
+                        }
+                        new Prefs(this).askedTile(false);
+                        maybeAskForTile();
+                    })));
             if (!tileOk && !dozeOk) c.addView(divider());
             if (!dozeOk) c.addView(row(R.drawable.ic_l_battery, getString(R.string.check_doze), getString(R.string.check_doze_help),
                     button(getString(R.string.allow), true, v -> askDozeExemption())));
@@ -343,7 +351,12 @@ public class MainActivity extends Activity {
             startActivity(new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
                     Uri.parse("package:" + getPackageName())));
         } catch (Exception e) {
-            startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+            try {
+                startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+            } catch (Exception e2) {
+                startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.parse("package:" + getPackageName())));
+            }
         }
     }
 

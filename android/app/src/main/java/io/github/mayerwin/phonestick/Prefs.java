@@ -57,7 +57,13 @@ final class Prefs {
     // ------------------------------------------------------------ event log
 
     /** Appends one line to a small on-phone event log (newest last), to diagnose drops. */
-    synchronized void log(String what) {
+    private static final Object LOG_LOCK = new Object();
+
+    void log(String what) {
+        synchronized (LOG_LOCK) { append(what); }
+    }
+
+    private void append(String what) {
         String old = sp.getString("log", "");
         String line = new SimpleDateFormat("MM-dd HH:mm:ss", Locale.US).format(new Date()) + "  " + what;
         String[] lines = old.isEmpty() ? new String[0] : old.split("\n");

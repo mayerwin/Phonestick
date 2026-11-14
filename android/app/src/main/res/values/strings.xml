@@ -38,6 +38,7 @@
 
     <string name="checklist_title">Finish setting up</string>
     <string name="check_tile">Quick Settings tile</string>
+    <string name="add_tile_manual">Open Quick Settings, tap the pencil (Edit) and drag the Phonestick tile in.</string>
     <string name="check_tile_help">Switch access on and off without opening the app.</string>
     <string name="check_doze">Wake without delay</string>
     <string name="check_doze_help">Lets Android wake the app the moment Wi-Fi or debugging changes, even when the phone is idle. Uses no battery: the app does nothing until woken.</string>

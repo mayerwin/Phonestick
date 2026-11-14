@@ -21,13 +21,21 @@ namespace Phonestick
     /// </summary>
     internal sealed class Mount
     {
-        private Process _rclone;
+        private readonly object _sync = new object();
+        private volatile Process _rclone;
         private DateTime _lastActive = DateTime.UtcNow;
-        private string _rcUrl, _rcAuth;
+        private string _rcBase, _rcAuth;
         private long _lastBytes = -1;
         public Phone Phone { get; private set; }
         public string Drive { get; private set; }
-        public bool IsMounted => _rclone != null && !_rclone.HasExited;
+        public bool IsMounted
+        {
+            get
+            {
+                var r = _rclone; // read once: Stop() clears it from another thread
+                try { return r != null && !r.HasExited; } catch { return false; }
+            }
+        }
         public event Action Ended;
 
         public static string ServerScript => AppInfo.PhoneDir + "/sftp.sh";
@@ -80,7 +88,8 @@ namespace Phonestick
         {
             var cache = Path.Combine(Config.LocalDir, "phone-rclone", version + "-" + arch);
             var bin = Path.Combine(cache, "rclone");
-            if (File.Exists(bin)) return bin;
+            // Only a fully extracted file is ever named "rclone" (extracted under a temp name, then renamed).
+            if (File.Exists(bin) && new FileInfo(bin).Length > 1000000) return bin;
             Directory.CreateDirectory(cache);
 
             ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
@@ -105,14 +114,18 @@ namespace Phonestick
                 using (var z = ZipFile.OpenRead(zipPath))
                 {
                     var entry = z.Entries.First(e => e.Name == "rclone");
-                    entry.ExtractToFile(bin, true);
+                    var tmp = bin + ".part";
+                    entry.ExtractToFile(tmp, true);
+                    if (File.Exists(bin)) File.Delete(bin);
+                    File.Move(tmp, bin);
                 }
                 File.Delete(zipPath);
             }
             return bin;
         }
 
-        public void Start(Phone p, Config cfg, Action<string> log)
+        /// <param name="cancelled">Checked while starting: true stops and unmounts again.</param>
+        public void Start(Phone p, Config cfg, Action<string> log, Func<bool> cancelled)
         {
             if (Tools.Rclone == null) throw new UserError("rclone was not found. Install it with:\nwinget install Rclone.Rclone");
             if (!Tools.WinFspInstalled) throw new UserError("WinFsp is needed to show the phone as a drive. Install it with:\nwinget install WinFsp.WinFsp");
@@ -131,9 +144,9 @@ namespace Phonestick
             listener.Start();
             int rcPort = ((IPEndPoint)listener.LocalEndpoint).Port;
             listener.Stop();
-            var rcUser = "phonestick";
+            var rcUser = RcUser;
             var rcPass = Guid.NewGuid().ToString("N");
-            _rcUrl = "http://127.0.0.1:" + rcPort + "/core/stats";
+            _rcBase = "http://127.0.0.1:" + rcPort + "/";
             _rcAuth = Convert.ToBase64String(System.Text.Encoding.ASCII.GetBytes(rcUser + ":" + rcPass));
             _lastBytes = -1;
 
@@ -152,7 +165,6 @@ namespace Phonestick
                 "--log-file", Tools.Q(logFile),
                 "--log-level", "NOTICE",
                 "--rc", "--rc-addr", "127.0.0.1:" + rcPort,
-                "--rc-user", rcUser, "--rc-pass", rcPass,
             });
             var psi = new ProcessStartInfo(Tools.Rclone, args)
             {
@@ -160,21 +172,32 @@ namespace Phonestick
                 CreateNoWindow = true,
             };
             Tools.ApplyAdbEnv(psi);
+            // The remote-control login goes through the environment, not the command line,
+            // where any local program could read it.
+            psi.EnvironmentVariables["RCLONE_RC_USER"] = rcUser;
+            psi.EnvironmentVariables["RCLONE_RC_PASS"] = rcPass;
             // External "ssh" command for the SFTP backend: adb shell into the server script.
             // rclone appends "-s sftp", which --pipe ignores.
             psi.EnvironmentVariables["RCLONE_SFTP_SSH"] =
                 "\"" + System.Windows.Forms.Application.ExecutablePath + "\" --pipe " + p.Serial;
 
-            _rclone = Process.Start(psi);
-            _rclone.EnableRaisingEvents = true;
-            _rclone.Exited += (s, e) => Ended?.Invoke();
-            Phone = p;
-            Drive = drive;
-            _lastActive = DateTime.UtcNow;
+            Process proc;
+            lock (_sync)
+            {
+                if (cancelled()) throw new OperationCanceledException();
+                proc = Process.Start(psi);
+                proc.EnableRaisingEvents = true;
+                proc.Exited += (s, e) => Ended?.Invoke();
+                _rclone = proc;
+                Phone = p;
+                Drive = drive;
+                _lastActive = DateTime.UtcNow;
+            }
 
             for (int i = 0; i < 40; i++)
             {
-                if (_rclone.HasExited)
+                if (cancelled()) { Stop(); throw new OperationCanceledException(); }
+                if (proc.HasExited)
                     throw new UserError("The drive could not be mounted. Details in:\n" + logFile);
                 if (Directory.Exists(drive + "\\")) return;
                 Thread.Sleep(500);
@@ -185,17 +208,95 @@ namespace Phonestick
 
         public void Stop()
         {
+            lock (_sync)
+            {
+                var r = _rclone;
+                try
+                {
+                    if (r != null && !r.HasExited)
+                    {
+                        foreach (var child in Children(r.Id)) { try { child.Kill(); } catch { } finally { child.Dispose(); } }
+                        r.Kill();
+                        r.WaitForExit(5000);
+                    }
+                }
+                catch { }
+                _rclone = null;
+            }
+        }
+
+        /// <summary>
+        /// Copies to P: finish in Explorer once the data is in rclone's local cache; the upload
+        /// to the phone goes on afterwards. Waits (up to <paramref name="max"/>) for those
+        /// uploads before the drive is closed. rclone also resumes any left over at the next mount.
+        /// </summary>
+        public void FinishUploads(Action<string> log, TimeSpan max)
+        {
+            var until = DateTime.UtcNow + max;
+            bool told = false;
+            while (IsMounted && DateTime.UtcNow < until)
+            {
+                int n = PendingUploads();
+                if (n <= 0) return;
+                if (!told) { log("Finishing copies to the phone..."); Log.Write("waiting for " + n + " upload(s)"); told = true; }
+                Thread.Sleep(1000);
+            }
+        }
+
+        /// <summary>Uploads queued or in progress, or -1 when rclone cannot be asked.</summary>
+        private int PendingUploads()
+        {
             try
             {
-                if (_rclone != null && !_rclone.HasExited)
+                var json = Rc("vfs/stats");
+                int Get(string k) { var m = Regex.Match(json, "\"" + k + "\"\\s*:\\s*(\\d+)"); return m.Success ? int.Parse(m.Groups[1].Value) : 0; }
+                return Get("uploadsInProgress") + Get("uploadsQueued");
+            }
+            catch { return -1; }
+        }
+
+        private string Rc(string command)
+        {
+            using (var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) })
+            {
+                var req = new HttpRequestMessage(HttpMethod.Post, _rcBase + command);
+                req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", _rcAuth);
+                req.Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json");
+                return http.SendAsync(req).Result.Content.ReadAsStringAsync().Result;
+            }
+        }
+
+        private const string RcUser = "phonestick";
+
+        /// <summary>
+        /// An rclone mount left behind when Phonestick was killed keeps the drive letter busy and
+        /// cannot be reached any more: ends it. Recognised by our ":sftp:" mount and our --pipe.
+        /// </summary>
+        public static void KillStale()
+        {
+            try
+            {
+                using (var s = new ManagementObjectSearcher(
+                    "SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name='rclone.exe'"))
                 {
-                    foreach (var child in Children(_rclone.Id)) { try { child.Kill(); } catch { } }
-                    _rclone.Kill();
-                    _rclone.WaitForExit(5000);
+                    foreach (ManagementObject o in s.Get())
+                    {
+                        var cmd = o["CommandLine"] as string ?? "";
+                        if (!cmd.Contains("mount :sftp:") || !cmd.Contains("--rc-addr 127.0.0.1:")) continue;
+                        try
+                        {
+                            using (var p = Process.GetProcessById(Convert.ToInt32(o["ProcessId"])))
+                            {
+                                foreach (var child in Children(p.Id)) { try { child.Kill(); } catch { } finally { child.Dispose(); } }
+                                p.Kill();
+                                Log.Write("ended a stale rclone mount (pid " + p.Id + ")");
+                            }
+                        }
+                        catch { }
+                    }
                 }
             }
-            catch { }
-            _rclone = null;
+            catch (Exception ex) { Log.Write("stale mount check failed: " + ex.Message); }
         }
 
         /// <summary>
@@ -208,18 +309,13 @@ namespace Phonestick
             if (!IsMounted) return false;
             try
             {
-                using (var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) })
-                {
-                    var req = new HttpRequestMessage(HttpMethod.Post, _rcUrl);
-                    req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", _rcAuth);
-                    req.Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json");
-                    var json = http.SendAsync(req).Result.Content.ReadAsStringAsync().Result;
-                    var m = Regex.Match(json, @"""bytes""\s*:\s*(\d+)");
-                    long bytes = m.Success ? long.Parse(m.Groups[1].Value) : 0;
-                    bool transferring = Regex.IsMatch(json, @"""transferring""\s*:\s*\[\s*\{");
-                    if (bytes != _lastBytes || transferring) _lastActive = DateTime.UtcNow;
-                    _lastBytes = bytes;
-                }
+                var json = Rc("core/stats");
+                var m = Regex.Match(json, @"""bytes""\s*:\s*(\d+)");
+                long bytes = m.Success ? long.Parse(m.Groups[1].Value) : 0;
+                bool transferring = Regex.IsMatch(json, @"""transferring""\s*:\s*\[\s*\{");
+                // A copy waiting to reach the phone (in progress, queued or retrying) is activity too.
+                if (bytes != _lastBytes || transferring || PendingUploads() > 0) _lastActive = DateTime.UtcNow;
+                _lastBytes = bytes;
             }
             catch (Exception ex)
             {

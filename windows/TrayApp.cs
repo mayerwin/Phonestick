@@ -35,8 +35,8 @@ namespace Phonestick
         private readonly Config _cfg = Config.Load();
         private readonly Mount _mount = new Mount();
         private readonly System.Windows.Forms.Timer _idleTimer = new System.Windows.Forms.Timer { Interval = 60000 };
-        private Process _scrcpy;
-        private bool _busy;
+        private volatile Process _scrcpy;
+        private volatile bool _busy;
         private string _busyText = "Connecting...";
         /// <summary>Set by Disconnect while a connect is running: its error, if any, is not shown.</summary>
         private volatile bool _cancelled;
@@ -64,20 +64,28 @@ namespace Phonestick
             // Redraw the tray glyph when the taskbar theme or scaling changes (events, not polling).
             SystemEvents.UserPreferenceChanged += (s, e) => _ui.Post(_ => RedrawTrayIcons(), null);
             SystemEvents.DisplaySettingsChanged += (s, e) => _ui.Post(_ => RedrawTrayIcons(), null);
+            // Going to sleep: close the drive and the screen cleanly. After a resume the link to the
+            // phone is gone, and a dead drive would make Explorer hang on it.
+            SystemEvents.PowerModeChanged += (s, e) => { if (e.Mode == PowerModes.Suspend) OnSuspend(); };
+            // The adb server is only stopped when nothing uses it any more.
+            Phone.InUse = () => _busy || _mount.IsMounted || ScreenOpen || SetupForm.Busy;
 
             if (!_cfg.FirstRunDone)
             {
-                _cfg.FirstRunDone = true;
-                _cfg.Save();
-                SetAutostart(true);
-                // Fetch the helper programs right away, in the background, so the first
-                // "Open phone files" is quick. Any failure is reported when they are needed.
-                if (!Helpers.AllPresent)
-                    Task.Run(() => { try { Helpers.Ensure(m => Log.Write(m)); } catch (Exception ex) { Log.Write("helpers: " + ex.Message); } });
-                Balloon(AppInfo.Name + " is in the tray",
-                    string.IsNullOrEmpty(_cfg.PhoneSerial)
-                        ? "Right-click the icon and choose \"Set up phone\" to get started."
-                        : "Click the icon to open your phone.");
+                try
+                {
+                    _cfg.FirstRunDone = true;
+                    _cfg.Save();
+                    SetAutostart(true);
+                    // Fetch the helper programs right away, in the background, so the first
+                    // "Open phone files" is quick. Any failure is reported when they are needed.
+                    Task.Run(() => { try { if (!Helpers.AllPresent) Helpers.Ensure(m => Log.Write(m)); } catch (Exception ex) { Log.Write("helpers: " + ex.Message); } });
+                    Balloon(AppInfo.Name + " is in the tray",
+                        string.IsNullOrEmpty(_cfg.PhoneSerial)
+                            ? "Right-click the icon and choose \"Set up phone\" to get started."
+                            : "Click the icon to open your phone.");
+                }
+                catch (Exception ex) { Log.Write("first run: " + ex.Message); }
             }
             RefreshMenu();
             // First update check a minute after start, away from the login rush. One-shot.
@@ -117,16 +125,30 @@ namespace Phonestick
 
         private void RedrawTrayIcons()
         {
+            var old = new[] { _iconIdle, _iconActive, _iconMounted };
             _iconIdle = Icons.Tray(Icons.TrayState.Idle);
             _iconActive = Icons.Tray(Icons.TrayState.On);
             _iconMounted = Icons.Tray(Icons.TrayState.Mounted);
-            RefreshMenu();
+            RefreshMenu(); // the tray now shows a new icon: the old ones can go
+            foreach (var i in old) i?.Dispose();
         }
+
+        private bool ScreenOpen
+        {
+            get
+            {
+                var s = _scrcpy; // read once: it is replaced from a worker thread
+                try { return s != null && !s.HasExited; } catch { return false; }
+            }
+        }
+
+        /// <summary>The running operation is a connect, which "Cancel" may stop.</summary>
+        private bool Connecting => _busy && _busyText == "Connecting...";
 
         private void RefreshMenu()
         {
             bool setUp = !string.IsNullOrEmpty(_cfg.PhoneSerial);
-            bool screen = _scrcpy != null && !_scrcpy.HasExited;
+            bool screen = ScreenOpen;
             var name = string.IsNullOrEmpty(_cfg.PhoneModel) ? "phone" : _cfg.PhoneModel;
             var status = !setUp ? "no phone set up yet"
                 : _mount.IsMounted ? name + " on " + _mount.Drive
@@ -136,8 +158,9 @@ namespace Phonestick
             _open.Text = _mount.IsMounted ? "Show phone files" : "Open phone files";
             _open.Enabled = setUp && (_mount.IsMounted || !_busy);
             _screen.Enabled = setUp && !_busy && !screen;
-            _disconnect.Enabled = _busy || _mount.IsMounted || screen;
-            _disconnect.Text = _busy && !_mount.IsMounted && !screen ? "Cancel" : "Disconnect";
+            // While busy, only a connect can be cancelled (not an update or a disconnect).
+            _disconnect.Enabled = Connecting || (!_busy && (_mount.IsMounted || screen));
+            _disconnect.Text = Connecting && !_mount.IsMounted && !screen ? "Cancel" : "Disconnect";
             _updateItem.Visible = _update != null;
             if (_update != null) _updateItem.Text = "Update to " + AppInfo.Name + " " + _update.VersionText;
             _updateItem.Enabled = !_busy;
@@ -150,9 +173,6 @@ namespace Phonestick
 
         /// <summary>"--demo": shows a connected phone named "Pixel" without connecting (screenshots).</summary>
         internal static bool Demo, DemoIdle;
-        /// <summary>Started by the updater ("--after-update").</summary>
-        internal static bool JustUpdated;
-
         private FlyoutState BuildState()
         {
             bool setUp = !string.IsNullOrEmpty(_cfg.PhoneSerial);
@@ -163,7 +183,7 @@ namespace Phonestick
                 Busy = _busy,
                 BusyText = _busyText,
                 Mounted = _mount.IsMounted,
-                Screen = _scrcpy != null && !_scrcpy.HasExited,
+                Screen = ScreenOpen,
                 Drive = _mount.IsMounted ? _mount.Drive : _cfg.Drive,
                 Phone = string.IsNullOrEmpty(_cfg.PhoneModel) ? "Your phone" : _cfg.PhoneModel,
                 IdleMinutes = _cfg.IdleMinutes,
@@ -177,6 +197,8 @@ namespace Phonestick
         private void ToggleFlyout()
         {
             if (Flyout.Current != null && !Flyout.Current.IsDisposed) { Flyout.Current.Close(); return; }
+            // The click on the icon has just closed the panel (it lost focus): leave it closed.
+            if (unchecked(Environment.TickCount - Flyout.LastClosedTick) < 400) return;
             ShowPanel(false);
         }
 
@@ -271,7 +293,8 @@ namespace Phonestick
                 _ui.Post(_ =>
                 {
                     _updateChecking = false;
-                    _cfg.LastUpdateCheck = DateTime.UtcNow;
+                    // A failed check (offline at login, say) is retried after a day, not a month.
+                    _cfg.LastUpdateCheck = error == null ? DateTime.UtcNow : DateTime.UtcNow - Updater.Interval + TimeSpan.FromDays(1);
                     _cfg.Save();
                     if (error != null)
                     {
@@ -306,14 +329,27 @@ namespace Phonestick
             bool done = false;
             Run("Updating", log =>
             {
-                DisconnectAll(); // never swap the exe under a mounted drive or a screen session
-                Updater.Install(info, log);
+                // Download and check first: if that fails, the drive and screen stay as they are.
+                Updater.Download(info, log);
+                // Never swap the exe under a mounted drive or a screen session.
+                _mount.FinishUploads(log, TimeSpan.FromMinutes(2));
+                DisconnectAll();
+                Updater.Swap(info, log);
                 done = true;
             }, after: () =>
             {
                 if (!done) return;
                 try { Updater.Relaunch(); }
-                catch (Exception ex) { Log.Write("relaunch failed: " + ex.Message); }
+                catch (Exception ex)
+                {
+                    // The new exe would not start (blocked by antivirus or SmartScreen, say): put the
+                    // previous one back and keep running, rather than leave no Phonestick at all.
+                    Log.Write("relaunch failed: " + ex.Message + "; rolling back");
+                    Updater.Rollback();
+                    MessageBox.Show("The new version could not be started (" + ex.Message + "). " + AppInfo.Name +
+                        " " + Updater.CurrentText + " was kept.", AppInfo.Name, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
                 _tray.Visible = false;
                 ExitThread();
             });
@@ -331,10 +367,14 @@ namespace Phonestick
             Run("Connecting to your phone", log =>
             {
                 Helpers.Ensure(log);
+                StopIfCancelled();
                 var p = FindPhone();
-                _mount.Start(p, _cfg, log);
+                StopIfCancelled();
+                p.EnsureAppCurrent(log);
+                _mount.Start(p, _cfg, log, () => _cancelled);
                 _ui.Post(_ =>
                 {
+                    if (!_mount.IsMounted) return; // cancelled or ended meanwhile
                     if (_cfg.IdleMinutes > 0) _idleTimer.Start();
                     Log.Write("mounted " + _mount.Drive + ", idle timer " + (_idleTimer.Enabled ? "on" : "off"));
                     Explore(_mount.Drive);
@@ -342,12 +382,21 @@ namespace Phonestick
             });
         }
 
+        /// <summary>Ends a connect quietly between its steps once the user clicked Cancel.</summary>
+        private void StopIfCancelled()
+        {
+            if (_cancelled) throw new OperationCanceledException();
+        }
+
         private void ShowScreen()
         {
             Run("Connecting to your phone", log =>
             {
                 Helpers.Ensure(log);
+                StopIfCancelled();
                 var p = FindPhone();
+                StopIfCancelled();
+                p.EnsureAppCurrent(log);
                 var psi = new ProcessStartInfo(Tools.Scrcpy, "-s " + Tools.Q(p.Serial) + " --window-title " + Tools.Q(p.Model)
                     + " --stay-awake")
                 {
@@ -363,8 +412,15 @@ namespace Phonestick
                 proc.OutputDataReceived += (s, e) => { if (e.Data != null) lock (err) err.AppendLine(e.Data); };
                 proc.BeginErrorReadLine();
                 proc.BeginOutputReadLine();
-                // scrcpy fails fast when something is wrong: report what it said.
-                if (proc.WaitForExit(6000) && proc.ExitCode != 0)
+                // scrcpy fails fast when something is wrong: report what it said. It is up once
+                // its window shows (no need to wait the full 6 s then).
+                for (int i = 0; i < 60 && !proc.HasExited; i++)
+                {
+                    proc.Refresh();
+                    if (proc.MainWindowHandle != IntPtr.Zero) break;
+                    Thread.Sleep(100);
+                }
+                if (proc.HasExited && proc.ExitCode != 0)
                 {
                     string said;
                     lock (err) said = err.ToString().Trim();
@@ -375,10 +431,13 @@ namespace Phonestick
                 proc.EnableRaisingEvents = true;
                 proc.Exited += (s, e) => _ui.Post(_ =>
                 {
-                    if (!_mount.IsMounted && !_busy) Task.Run(() => Phone.StopServer());
+                    Task.Run(() => Phone.StopServerIfUnused());
                     RefreshMenu();
                 }, null);
+                var previous = _scrcpy;
                 _scrcpy = proc;
+                previous?.Dispose();
+                if (_cancelled) { try { proc.Kill(); } catch { } throw new OperationCanceledException(); }
             });
         }
 
@@ -390,7 +449,8 @@ namespace Phonestick
                 _cfg.LastEndpoint = p.Serial;
                 _cfg.Save();
             }
-            if (p != null) { var phone = p; Task.Run(() => { Thread.Sleep(1500); phone.HideDebugNotice(); }); }
+            // Not after a cancel or disconnect: the adb command would start the server again.
+            if (p != null) { var phone = p; Task.Run(() => { Thread.Sleep(1500); if (!_cancelled && Phone.InUse()) phone.HideDebugNotice(); }); }
             if (p == null)
             {
                 // Tell apart "phone not on this network" from "phone here, but access is off".
@@ -419,21 +479,42 @@ namespace Phonestick
         {
             if (_busy)
             {
+                // Only a connect can be cancelled: it stops at its next step, and undoes a
+                // mount that comes up meanwhile.
+                if (!Connecting) return;
                 _cancelled = true;
+                RefreshMenu();
                 Task.Run(() => DisconnectAll());
                 return;
             }
-            Run("Disconnecting", log => DisconnectAll());
+            Run("Disconnecting", log =>
+            {
+                _mount.FinishUploads(log, TimeSpan.FromMinutes(2));
+                DisconnectAll();
+            });
         }
 
         private void DisconnectAll()
         {
             var phone = _mount.Phone;
             _mount.Stop();
-            try { if (_scrcpy != null && !_scrcpy.HasExited) _scrcpy.Kill(); } catch { }
+            var s = _scrcpy;
+            try { if (s != null && !s.HasExited) s.Kill(); } catch { }
             try { phone?.Disconnect(); } catch { }
-            Phone.StopServer();
+            // Not while a setup or pairing uses the adb server.
+            if (!SetupForm.Busy) Phone.StopServer();
             _ui.Post(_ => _idleTimer.Stop(), null);
+        }
+
+        private void OnSuspend()
+        {
+            // Runs on the system-events thread: Windows gives a moment before sleeping, so no wait for uploads
+            // (rclone resumes those at the next mount).
+            if (!_mount.IsMounted && !ScreenOpen) return;
+            Log.Write("going to sleep: disconnecting");
+            if (_busy && Connecting) _cancelled = true;
+            try { DisconnectAll(); } catch (Exception ex) { Log.Write("suspend: " + ex.Message); }
+            _ui.Post(_ => RefreshMenu(), null);
         }
 
         private bool _checking;
@@ -447,11 +528,9 @@ namespace Phonestick
             Task.Run(() => _mount.IdleFor(limit)).ContinueWith(t =>
             {
                 _checking = false;
-                if (t.Status == TaskStatus.RanToCompletion && t.Result && _mount.IsMounted)
-                {
-                    Run("Disconnecting", log => DisconnectAll());
+                if (t.Status == TaskStatus.RanToCompletion && t.Result && _mount.IsMounted
+                    && Run("Disconnecting", log => DisconnectAll()))
                     Balloon("Phone disconnected", "Unused for " + IdleLabel(_cfg.IdleMinutes) + ". Open it again from the tray.");
-                }
             }, TaskScheduler.FromCurrentSynchronizationContext());
         }
 
@@ -459,36 +538,44 @@ namespace Phonestick
         {
             Log.Write("mount ended");
             _idleTimer.Stop();
-            if (!_busy && (_scrcpy == null || _scrcpy.HasExited)) Task.Run(() => Phone.StopServer());
+            Task.Run(() => Phone.StopServerIfUnused());
             RefreshMenu();
         }
 
-        /// <summary>Runs an action off the UI thread, showing errors as messages.</summary>
-        internal void Run(string what, Action<Action<string>> action, Action after = null)
+        /// <summary>Runs an action off the UI thread, showing errors as messages. False when busy (nothing started).</summary>
+        internal bool Run(string what, Action<Action<string>> action, Action after = null)
         {
-            if (_busy) return;
-            _busy = true;
+            if (_busy) return false;
             _cancelled = false;
             _busyText = what.StartsWith("Disconnect") ? "Disconnecting..." : what.StartsWith("Updat") ? "Updating..." : "Connecting...";
+            _busy = true;
             RefreshMenu();
-            _tray.Text = AppInfo.Name + ": " + what + "...";
+            _tray.Text = Trim63(AppInfo.Name + ": " + what + "...");
             Task.Run(() =>
             {
                 string error = null;
                 try { action(msg => _ui.Post(_ => { _tray.Text = Trim63(AppInfo.Name + ": " + msg); }, null)); }
+                catch (OperationCanceledException) { }
                 catch (AggregateException ae) { error = ae.InnerException?.Message ?? ae.Message; }
                 catch (UserError ue) { error = ue.Message; }
                 catch (Exception ex) { error = ex.Message; }
                 if (error != null) Log.Write(what + ": " + error + (_cancelled ? " (cancelled)" : ""));
-                if (_cancelled) error = null;
+                bool cancelled = _cancelled;
+                if (cancelled) error = null;
                 _ui.Post(_ =>
                 {
                     _busy = false;
-                    RefreshMenu();
-                    if (error != null) MessageBox.Show(error, AppInfo.Name, MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    after?.Invoke();
+                    // A cancelled connect may have restarted the adb server after Cancel stopped it.
+                    if (cancelled) Task.Run(() => Phone.StopServerIfUnused());
+                    try
+                    {
+                        RefreshMenu();
+                        if (error != null) MessageBox.Show(error, AppInfo.Name, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    }
+                    finally { after?.Invoke(); } // always: for an update, this relaunches or rolls back
                 }, null);
             });
+            return true;
         }
 
         internal void ConfigChanged() => _ui.Post(_ => RefreshMenu(), null);
@@ -529,8 +616,19 @@ namespace Phonestick
 
         private void ExitApp()
         {
+            if (Flyout.Current != null && !Flyout.Current.IsDisposed) Flyout.Current.Close();
             _tray.Visible = false;
-            DisconnectAll();
+            // Copies still on their way to the phone finish first; the tray stays responsive meanwhile.
+            if (Run("Disconnecting", log =>
+                {
+                    _mount.FinishUploads(log, TimeSpan.FromMinutes(2));
+                    DisconnectAll();
+                }, after: ExitThread))
+                return;
+            // Busy: an update cannot be interrupted, a connect is cancelled.
+            if (_busyText == "Updating...") { _tray.Visible = true; return; }
+            _cancelled = true;
+            Task.Run(() => DisconnectAll()).Wait(20000);
             ExitThread();
         }
 

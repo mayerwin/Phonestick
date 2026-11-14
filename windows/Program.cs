@@ -46,6 +46,9 @@ namespace Phonestick
                     if (open) openSignal.Set();
                     return 0;
                 }
+                // A tray app must never show the .NET crash dialog: log a UI-thread error and keep going.
+                Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+                Application.ThreadException += (s, e) => Log.Write("Unexpected error: " + e.Exception);
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
                 var tray = new TrayApp(openSignal, open);

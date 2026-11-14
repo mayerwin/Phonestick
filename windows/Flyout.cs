@@ -241,8 +241,11 @@ namespace Phonestick
             Activate();
             var start = Environment.TickCount;
             var t = new Timer { Interval = 10 };
+            // The panel can close (focus lost, a click) before the fade ends: stop with it.
+            FormClosed += (o, e) => { t.Stop(); t.Dispose(); };
             t.Tick += (o, e) =>
             {
+                if (IsDisposed || Disposing) { t.Stop(); t.Dispose(); return; }
                 var k = Math.Min(1.0, (Environment.TickCount - start) / 140.0);
                 Opacity = 1 - Math.Pow(1 - k, 3);
                 if (k >= 1) { t.Stop(); t.Dispose(); }

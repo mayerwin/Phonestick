@@ -335,9 +335,9 @@
         <h3><svg><use href="#i-phone"/></svg>On your phone</h3>
         <ol class="go-list">
           <li>Settings › About phone: tap <b>Build number</b> 7 times.</li>
-          <li>Developer options: turn on <b>Disable adb authorization timeout</b> and <b>Wireless debugging</b>.</li>
-          <li>Wireless debugging › <b>Pair device with pairing code</b>. In Phonestick's panel: gear › <b>Pair with a Wi-Fi code</b>.</li>
-          <li>Choose <b>Set up a phone</b>. The app installs and its tile appears.</li>
+          <li>Developer options: turn on <b>Disable adb authorization timeout</b> and <b>Wireless debugging</b>, on the same Wi-Fi as your PC.</li>
+          <li>Click Phonestick's tray icon, then <b>Set up your phone</b>. On the phone: Wireless debugging › <b>Pair device with QR code</b>, and scan the code it shows.</li>
+          <li>That's it: the app installs, its tile appears and your phone opens in Explorer.</li>
         </ol>
       </div>
       <div class="go-card reveal">
@@ -377,7 +377,7 @@
       <p>No account, no cloud relay, no server app on the phone. Your files travel straight from the phone to your PC on your own network.</p>
     </div>
     <div class="steps">
-      <div class="step reveal"><h3>Pair your PC</h3><p>Turn on Wireless debugging on the phone and type the 6-digit pairing code into Phonestick. Setup installs the phone app and adds its tile. No cable needed.</p></div>
+      <div class="step reveal"><h3>Pair your PC</h3><p>Turn on Wireless debugging on the phone and scan the QR code Phonestick shows. Setup installs the phone app and adds its tile. No cable needed.</p></div>
       <div class="step reveal"><h3>Flip the tile</h3><p>While the tile is on, the app keeps Wireless debugging available on your home Wi-Fi, through reboots, reconnects and access-point changes.</p></div>
       <div class="step reveal"><h3>Open P:</h3><p>Click the tray icon, then <b>Open phone files</b>. Your photos, downloads and documents appear in Explorer. It disconnects by itself when you stop using it.</p></div>
     </div>
@@ -460,7 +460,7 @@
     <details class="reveal"><summary>Does it use battery or data?</summary><p>No mobile data: everything stays on your Wi-Fi. While the tile is on, the phone app keeps a tiny listener that sleeps until Wi-Fi or a debugging switch changes: no polling, no timers. With the tile off it does nothing at all.</p></details>
     <details class="reveal"><summary>Why Wireless debugging, and is that safe?</summary><p>It is Android's built-in, encrypted and authenticated way for a trusted computer to reach the phone. Only paired computers can connect. Phonestick keeps it limited to your approved networks and locks USB debugging off.</p></details>
     <details class="reveal"><summary>How fast is it?</summary><p>On a typical home Wi-Fi, around 10 MB/s, so a 300 MB video copies in about half a minute. Photos and documents open straight from the drive.</p></details>
-    <details class="reveal"><summary>What can my computer see?</summary><p>Shared storage: DCIM, Download, Documents, Pictures, Music, Movies and app media folders, the same things a USB cable shows. Other apps' private data stays private.</p></details>
+    <details class="reveal"><summary>What can my computer see?</summary><p>Shared storage: DCIM, Download, Documents, Pictures, Music, Movies and app media folders, the same things a USB cable shows. A microSD card shows up as a second drive. Other apps' private data stays private.</p></details>
     <details class="reveal"><summary>Does it work away from home?</summary><p>It is made for your home network. Access only comes back by itself on networks you approved, and the computer has to be on the same network.</p></details>
     <details class="reveal"><summary>How do updates work?</summary><p>Once a month Phonestick asks GitHub whether a new version is out. If so, it says so in its panel and tray menu, never in a popup. One click installs it: downloaded, checked against its published checksum, swapped in place and restarted. The phone app comes with it: the PC brings it up to date the next time it connects. You can turn the check off in Settings.</p></details>
     <details class="reveal"><summary>iPhone? Mac? Linux?</summary><p>Android 11 or newer and Windows 10 or 11 for now. The Windows part is small and open source if you want to port it.</p></details>

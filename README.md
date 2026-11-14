@@ -97,9 +97,9 @@ Quick to set up, nothing to maintain.
 **On the phone**
 
 1. Settings › About phone: tap **Build number** 7 times.
-2. Developer options: turn on **Disable adb authorization timeout** and **Wireless debugging**, with the phone on your home Wi-Fi.
-3. Wireless debugging › **Pair device with pairing code**. On the computer: click the tray icon, the gear, then **Pair with a Wi-Fi code**.
-4. Choose **Set up a phone**. Phonestick installs its phone app, grants its permission, adds its tile at the end of your Quick Settings and locks USB debugging off. Done.
+2. Developer options: turn on **Disable adb authorization timeout** and **Wireless debugging**, with the phone on the same Wi-Fi as your PC.
+3. On the PC: click the tray icon, then **Set up your phone**. It shows a QR code. On the phone: Wireless debugging › **Pair device with QR code**, and scan it (or **Pair device with pairing code** and type the 6 digits into Phonestick).
+4. Setup carries on by itself: it installs the phone app, grants its permission, adds its tile at the end of your Quick Settings, locks USB debugging off and opens your phone in Explorer. Done.
 
 No cable needed. (USB works too: turn on USB debugging, plug in and allow the computer.)
 
@@ -130,7 +130,7 @@ Phonestick adds no new server and no new protocol. It uses Android's own Wireles
 | **Approved networks only** | Access comes back by itself only on Wi-Fi networks you approved. Elsewhere the app stays silent. A network that happens to use the same addresses as yours still gets Android's own "Allow wireless debugging on this network?" question first, and only your paired PC could connect anyway. |
 | **Off means off** | With the tile off, Wireless debugging is off and nothing on the phone listens. The PC closes its connection whenever you disconnect. |
 | **Minimal permissions** | `WRITE_SECURE_SETTINGS` (granted once over adb, only to switch debugging), `ACCESS_NETWORK_STATE`, `RECEIVE_BOOT_COMPLETED`, `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`. No internet, location, accessibility or notification access. |
-| **Private apps stay private** | The drive shows shared storage (DCIM, Download, Documents, media), like a USB cable. Other apps' private data stays out of reach. |
+| **Private apps stay private** | The drive shows shared storage (DCIM, Download, Documents, media), like a USB cable. A microSD card shows up as a second drive. Other apps' private data stays out of reach. |
 | **Your computer's key** | `%USERPROFILE%\.android\adbkey`. Anyone who copies it can act as your computer, so it is protected like the rest of your Windows account. Setup disables Android's 7-day authorization timeout; revoke it any time in Developer options. |
 
 <details>

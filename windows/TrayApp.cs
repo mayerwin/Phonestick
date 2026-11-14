@@ -82,7 +82,7 @@ namespace Phonestick
                     Task.Run(() => { try { if (!Helpers.AllPresent) Helpers.Ensure(m => Log.Write(m)); } catch (Exception ex) { Log.Write("helpers: " + ex.Message); } });
                     Balloon(AppInfo.Name + " is in the tray",
                         string.IsNullOrEmpty(_cfg.PhoneSerial)
-                            ? "Right-click the icon and choose \"Set up phone\" to get started."
+                            ? "Click the icon to set up your phone."
                             : "Click the icon to open your phone.");
                 }
                 catch (Exception ex) { Log.Write("first run: " + ex.Message); }
@@ -151,7 +151,7 @@ namespace Phonestick
             bool screen = ScreenOpen;
             var name = string.IsNullOrEmpty(_cfg.PhoneModel) ? "phone" : _cfg.PhoneModel;
             var status = !setUp ? "no phone set up yet"
-                : _mount.IsMounted ? name + " on " + _mount.Drive
+                : _mount.IsMounted ? name + " on " + _mount.Drive + (_mount.SdDrive != null ? ", SD card on " + _mount.SdDrive : "")
                 : screen ? name + ", screen open"
                 : _busy ? "connecting..."
                 : name;
@@ -580,6 +580,8 @@ namespace Phonestick
         }
 
         internal void ConfigChanged() => _ui.Post(_ => RefreshMenu(), null);
+        /// <summary>After setup: connect and show the files straight away.</summary>
+        internal void OpenPhoneSoon() => _ui.Post(_ => OpenPhone(), null);
 
         // ------------------------------------------------------------------ helpers
 

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
@@ -24,8 +25,6 @@ namespace Phonestick
         private readonly object _sync = new object();
         private volatile Process _rclone;
         private DateTime _lastActive = DateTime.UtcNow;
-        private string _rcBase, _rcAuth;
-        private long _lastBytes = -1;
         public Phone Phone { get; private set; }
         public string Drive { get; private set; }
         public bool IsMounted
@@ -39,6 +38,7 @@ namespace Phonestick
         public event Action Ended;
 
         public static string ServerScript => AppInfo.PhoneDir + "/sftp.sh";
+        public static string SdServerScript => AppInfo.PhoneDir + "/sftp-sd.sh";
 
         public static string RcloneVersion()
         {
@@ -73,6 +73,11 @@ namespace Phonestick
             // Serve the real path: /sdcard is a symlink, which rclone will not follow as a root.
             var root = p.Shell("readlink -f /sdcard", 10000).Out.Trim();
             if (!root.StartsWith("/")) root = "/storage/emulated/0";
+            WriteServerScript(p, ServerScript, root);
+        }
+
+        private static void WriteServerScript(Phone p, string path, string root)
+        {
             // --dir-cache-time 1s: the server must not hide changes made on the phone itself;
             // the computer side does its own caching.
             // stderr goes to /dev/null so log lines can never corrupt the SFTP stream.
@@ -80,7 +85,7 @@ namespace Phonestick
                 "export RCLONE_CONFIG=" + AppInfo.PhoneDir + "/rclone.conf; " +
                 "export RCLONE_CACHE_DIR=" + AppInfo.PhoneDir + "/cache; " +
                 "exec " + AppInfo.PhoneDir + "/rclone serve sftp --stdio --dir-cache-time 1s " + root + " 2>/dev/null";
-            p.Shell("echo '" + script + "' > " + ServerScript + " && touch " + AppInfo.PhoneDir + "/rclone.conf", 10000);
+            p.Shell("echo '" + script + "' > " + path + " && touch " + AppInfo.PhoneDir + "/rclone.conf", 10000);
         }
 
         /// <summary>Downloads rclone for the phone from downloads.rclone.org and checks its SHA-256.</summary>
@@ -124,6 +129,49 @@ namespace Phonestick
             return bin;
         }
 
+        /// <summary>One rclone mount: the phone's internal storage, or its SD card.</summary>
+        private sealed class Vol
+        {
+            public Process Proc;
+            public string Drive, RcBase, RcAuth;
+            public long LastBytes = -1;
+            public bool Alive { get { var r = Proc; try { return r != null && !r.HasExited; } catch { return false; } } }
+        }
+
+        private Vol _sd;
+
+        /// <summary>The SD card's drive letter while it is mounted, else null.</summary>
+        public string SdDrive { get { var v = _sd; return v != null && v.Alive ? v.Drive : null; } }
+
+        /// <summary>
+        /// The removable card's folder on the phone (a portable SD card or USB drive shows up as
+        /// /storage/XXXX-XXXX), or null. The adb shell can read and write it.
+        /// </summary>
+        private static string FindCard(Phone p)
+        {
+            try
+            {
+                foreach (var name in p.Shell("ls /storage", 10000).Out.Split('\n').Select(x => x.Trim()))
+                    if (Regex.IsMatch(name, @"^[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}$")) return "/storage/" + name;
+            }
+            catch (Exception ex) { Log.Write("SD card check: " + ex.Message); }
+            return null;
+        }
+
+        /// <summary>The first free letter after the phone's drive, for the SD card.</summary>
+        private static string NextFreeDrive(string after)
+        {
+            var used = DriveInfo.GetDrives().Select(d => d.Name.Substring(0, 2).ToUpperInvariant()).ToList();
+            char c = after[0];
+            for (int i = 0; i < 26; i++)
+            {
+                c = c >= 'Z' ? 'D' : (char)(c + 1);
+                if (c + ":" == after) break;
+                if (!used.Contains(c + ":")) return c + ":";
+            }
+            return null;
+        }
+
         /// <param name="cancelled">Checked while starting: true stops and unmounts again.</param>
         public void Start(Phone p, Config cfg, Action<string> log, Func<bool> cancelled)
         {
@@ -134,21 +182,90 @@ namespace Phonestick
 
             EnsurePhoneServer(p, log);
             log("Mounting " + drive + "...");
-
-            var volname = string.IsNullOrEmpty(p.Model) ? "Phone" : p.Model;
             var logFile = Path.Combine(Config.LocalDir, "rclone.log");
             Directory.CreateDirectory(Config.LocalDir);
+            var model = string.IsNullOrEmpty(p.Model) ? "Phone" : p.Model;
+
+            Vol main;
+            lock (_sync)
+            {
+                if (cancelled()) throw new OperationCanceledException();
+                main = StartRclone(p, drive, model, ServerScript, logFile);
+                main.Proc.Exited += (s, e) =>
+                {
+                    // The phone link is gone: the SD card drive goes with it.
+                    var sd = _sd;
+                    if (sd != null) { StopVol(sd); ShellNotify.DriveRemoved(sd.Drive); _sd = null; }
+                    ShellNotify.DriveRemoved(drive);
+                    Ended?.Invoke();
+                };
+                _rclone = main.Proc;
+                _main = main;
+                Phone = p;
+                Drive = drive;
+                _lastActive = DateTime.UtcNow;
+            }
+            if (!WaitForDrive(main, cancelled))
+            {
+                bool exited = main.Proc.HasExited;
+                Stop();
+                throw new UserError((exited ? "The drive could not be mounted." : "The drive did not appear in time.") + " Details in:\n" + logFile);
+            }
+            ShellNotify.DriveAdded(drive);
+
+            // The SD card, when there is one, as a second drive. Never fails the connect.
+            try
+            {
+                var card = FindCard(p);
+                if (card == null || cancelled()) return;
+                var sdDrive = NextFreeDrive(drive);
+                if (sdDrive == null) { Log.Write("SD card found, but no free drive letter"); return; }
+                log("Mounting the SD card as " + sdDrive + "...");
+                WriteServerScript(p, SdServerScript, card);
+                Vol sd;
+                lock (_sync)
+                {
+                    if (cancelled() || !main.Alive) return;
+                    sd = StartRclone(p, sdDrive, model + " SD card", SdServerScript, logFile);
+                    _sd = sd;
+                }
+                if (WaitForDrive(sd, cancelled)) { ShellNotify.DriveAdded(sdDrive); Log.Write("SD card " + card + " on " + sdDrive); }
+                else { Log.Write("SD card did not mount, see rclone.log"); StopVol(sd); _sd = null; }
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { Log.Write("SD card: " + ex.Message); }
+        }
+
+        private Vol _main;
+
+        /// <summary>True once the drive shows up; false if rclone ended, or after 20 s, or on cancel.</summary>
+        private static bool WaitForDrive(Vol v, Func<bool> cancelled)
+        {
+            for (int i = 0; i < 40; i++)
+            {
+                if (cancelled()) return false;
+                if (v.Proc.HasExited) return false;
+                if (Directory.Exists(v.Drive + "\\")) return true;
+                Thread.Sleep(500);
+            }
+            return false;
+        }
+
+        private static Vol StartRclone(Phone p, string drive, string volname, string script, string logFile)
+        {
             // rclone's remote control on a random local port with a random password: the only
             // way to ask it how many bytes were transferred, for the idle check.
             var listener = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
             listener.Start();
             int rcPort = ((IPEndPoint)listener.LocalEndpoint).Port;
             listener.Stop();
-            var rcUser = RcUser;
             var rcPass = Guid.NewGuid().ToString("N");
-            _rcBase = "http://127.0.0.1:" + rcPort + "/";
-            _rcAuth = Convert.ToBase64String(System.Text.Encoding.ASCII.GetBytes(rcUser + ":" + rcPass));
-            _lastBytes = -1;
+            var v = new Vol
+            {
+                Drive = drive,
+                RcBase = "http://127.0.0.1:" + rcPort + "/",
+                RcAuth = Convert.ToBase64String(System.Text.Encoding.ASCII.GetBytes(RcUser + ":" + rcPass)),
+            };
 
             var args = string.Join(" ", new[]
             {
@@ -174,57 +291,49 @@ namespace Phonestick
             Tools.ApplyAdbEnv(psi);
             // The remote-control login goes through the environment, not the command line,
             // where any local program could read it.
-            psi.EnvironmentVariables["RCLONE_RC_USER"] = rcUser;
+            psi.EnvironmentVariables["RCLONE_RC_USER"] = RcUser;
             psi.EnvironmentVariables["RCLONE_RC_PASS"] = rcPass;
             // External "ssh" command for the SFTP backend: adb shell into the server script.
             // rclone appends "-s sftp", which --pipe ignores.
             psi.EnvironmentVariables["RCLONE_SFTP_SSH"] =
-                "\"" + System.Windows.Forms.Application.ExecutablePath + "\" --pipe " + p.Serial;
+                "\"" + System.Windows.Forms.Application.ExecutablePath + "\" --pipe " + p.Serial
+                + (script == SdServerScript ? " sd" : "");
 
-            Process proc;
-            lock (_sync)
-            {
-                if (cancelled()) throw new OperationCanceledException();
-                proc = Process.Start(psi);
-                // Tied to this app: if Phonestick ends in any way, Windows ends rclone and the drive goes.
-                ChildJob.Add(proc);
-                proc.EnableRaisingEvents = true;
-                proc.Exited += (s, e) => Ended?.Invoke();
-                _rclone = proc;
-                Phone = p;
-                Drive = drive;
-                _lastActive = DateTime.UtcNow;
-            }
-
-            for (int i = 0; i < 40; i++)
-            {
-                if (cancelled()) { Stop(); throw new OperationCanceledException(); }
-                if (proc.HasExited)
-                    throw new UserError("The drive could not be mounted. Details in:\n" + logFile);
-                if (Directory.Exists(drive + "\\")) return;
-                Thread.Sleep(500);
-            }
-            Stop();
-            throw new UserError("The drive did not appear in time. Details in:\n" + logFile);
+            var proc = Process.Start(psi);
+            // Tied to this app: if Phonestick ends in any way, Windows ends rclone and the drive goes.
+            ChildJob.Add(proc);
+            proc.EnableRaisingEvents = true;
+            v.Proc = proc;
+            return v;
         }
 
         public void Stop()
         {
             lock (_sync)
             {
-                var r = _rclone;
-                try
-                {
-                    if (r != null && !r.HasExited)
-                    {
-                        foreach (var child in Children(r.Id)) { try { child.Kill(); } catch { } finally { child.Dispose(); } }
-                        r.Kill();
-                        r.WaitForExit(5000);
-                    }
-                }
-                catch { }
+                var sd = _sd;
+                if (sd != null) { StopVol(sd); ShellNotify.DriveRemoved(sd.Drive); }
+                _sd = null;
+                var m = _main;
+                if (m != null) { StopVol(m); ShellNotify.DriveRemoved(m.Drive); }
+                _main = null;
                 _rclone = null;
             }
+        }
+
+        private static void StopVol(Vol v)
+        {
+            var r = v.Proc;
+            try
+            {
+                if (r != null && !r.HasExited)
+                {
+                    foreach (var child in Children(r.Id)) { try { child.Kill(); } catch { } finally { child.Dispose(); } }
+                    r.Kill();
+                    r.WaitForExit(5000);
+                }
+            }
+            catch { }
         }
 
         /// <summary>
@@ -245,24 +354,36 @@ namespace Phonestick
             }
         }
 
-        /// <summary>Uploads queued or in progress, or -1 when rclone cannot be asked.</summary>
-        private int PendingUploads()
+        private IEnumerable<Vol> Vols()
         {
-            try
-            {
-                var json = Rc("vfs/stats");
-                int Get(string k) { var m = Regex.Match(json, "\"" + k + "\"\\s*:\\s*(\\d+)"); return m.Success ? int.Parse(m.Groups[1].Value) : 0; }
-                return Get("uploadsInProgress") + Get("uploadsQueued");
-            }
-            catch { return -1; }
+            var m = _main; var s = _sd;
+            if (m != null && m.Alive) yield return m;
+            if (s != null && s.Alive) yield return s;
         }
 
-        private string Rc(string command)
+        /// <summary>Uploads queued or in progress on both drives, or -1 when rclone cannot be asked.</summary>
+        private int PendingUploads()
+        {
+            int total = 0;
+            foreach (var v in Vols())
+            {
+                try
+                {
+                    var json = Rc(v, "vfs/stats");
+                    int Get(string k) { var m = Regex.Match(json, "\"" + k + "\"\\s*:\\s*(\\d+)"); return m.Success ? int.Parse(m.Groups[1].Value) : 0; }
+                    total += Get("uploadsInProgress") + Get("uploadsQueued");
+                }
+                catch { return -1; }
+            }
+            return total;
+        }
+
+        private static string Rc(Vol v, string command)
         {
             using (var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) })
             {
-                var req = new HttpRequestMessage(HttpMethod.Post, _rcBase + command);
-                req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", _rcAuth);
+                var req = new HttpRequestMessage(HttpMethod.Post, v.RcBase + command);
+                req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", v.RcAuth);
                 req.Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json");
                 return http.SendAsync(req).Result.Content.ReadAsStringAsync().Result;
             }
@@ -309,21 +430,25 @@ namespace Phonestick
         public bool IdleFor(TimeSpan limit)
         {
             if (!IsMounted) return false;
-            try
+            foreach (var v in Vols().ToList())
             {
-                var json = Rc("core/stats");
-                var m = Regex.Match(json, @"""bytes""\s*:\s*(\d+)");
-                long bytes = m.Success ? long.Parse(m.Groups[1].Value) : 0;
-                bool transferring = Regex.IsMatch(json, @"""transferring""\s*:\s*\[\s*\{");
-                // A copy waiting to reach the phone (in progress, queued or retrying) is activity too.
-                if (bytes != _lastBytes || transferring || PendingUploads() > 0) _lastActive = DateTime.UtcNow;
-                _lastBytes = bytes;
+                try
+                {
+                    var json = Rc(v, "core/stats");
+                    var m = Regex.Match(json, @"""bytes""\s*:\s*(\d+)");
+                    long bytes = m.Success ? long.Parse(m.Groups[1].Value) : 0;
+                    bool transferring = Regex.IsMatch(json, @"""transferring""\s*:\s*\[\s*\{");
+                    if (bytes != v.LastBytes || transferring) _lastActive = DateTime.UtcNow;
+                    v.LastBytes = bytes;
+                }
+                catch (Exception ex)
+                {
+                    Log.Write("idle check failed: " + (ex.InnerException ?? ex).Message);
+                    _lastActive = DateTime.UtcNow; // unsure: do not disconnect
+                }
             }
-            catch (Exception ex)
-            {
-                Log.Write("idle check failed: " + (ex.InnerException ?? ex).Message);
-                _lastActive = DateTime.UtcNow; // unsure: do not disconnect
-            }
+            // A copy waiting to reach the phone (in progress, queued or retrying) is activity too.
+            if (PendingUploads() > 0) _lastActive = DateTime.UtcNow;
             return DateTime.UtcNow - _lastActive >= limit;
         }
 

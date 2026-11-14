@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Linq;
@@ -8,14 +9,21 @@ using System.Windows.Forms;
 
 namespace Phonestick
 {
-    /// <summary>One-time setup of a phone, over the USB cable (or an already paired Wi-Fi link).</summary>
+    /// <summary>
+    /// One-time setup of a phone. It starts looking as soon as the window opens and goes on by
+    /// itself as soon as the phone shows up, whichever way: the QR code scanned, a pairing code
+    /// typed, the USB cable plugged in, or a phone this PC already paired with.
+    /// </summary>
     internal sealed class SetupForm : Form
     {
         private static SetupForm _open;
         private readonly TrayApp _tray;
         private readonly Config _cfg;
         private readonly TextBox _log;
+        private readonly TextBox _code;
         private readonly Button _start;
+        private readonly string _qrName, _qrPass;
+        private volatile bool _closed;
 
         public static void ShowSetup(TrayApp tray, Config cfg)
         {
@@ -30,43 +38,100 @@ namespace Phonestick
             _cfg = cfg;
             Text = AppInfo.Name + ": set up phone";
             Icon = Icons.App;
-            Width = 640;
-            Height = 560;
-            StartPosition = FormStartPosition.CenterScreen;
             Font = Theme.UiFont(10f);
+            float scale;
+            using (var g = CreateGraphics()) scale = g.DpiX / 96f;
+            int S(int px) => (int)Math.Round(px * scale);
+            Width = S(780);
+            Height = S(640);
+            MinimumSize = new Size(S(640), S(560));
+            StartPosition = FormStartPosition.CenterScreen;
 
+            // Android's "Pair device with QR code": the phone scans this, then announces a pairing
+            // service under this name on the network, and this PC pairs with the password.
+            var rnd = new Random(Guid.NewGuid().GetHashCode());
+            string Alnum(int n) { const string a = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"; var c = new char[n]; for (int i = 0; i < n; i++) c[i] = a[rnd.Next(a.Length)]; return new string(c); }
+            _qrName = "phonestick-" + Alnum(8);
+            _qrPass = Alnum(12);
+
+            var bold = Theme.UiFont(10.5f, FontStyle.Bold);
             var intro = new Label
             {
-                Dock = DockStyle.Top,
-                Height = 200,
-                Padding = new Padding(12),
-                Text =
-                    "Before you start, on the phone:\r\n" +
-                    "1. Settings > About phone: tap Build number 7 times.\r\n" +
-                    "2. Settings > System > Developer options: turn on \"Disable adb authorization timeout\", then either\r\n" +
-                    "    - Wi-Fi (no cable): turn on Wireless debugging and use \"Pair with a Wi-Fi code\" from the tray menu, or\r\n" +
-                    "    - USB: turn on USB debugging, plug the phone in, tick \"Always allow from this computer\" and tap Allow.\r\n\r\n" +
-                    "Then click Start. The phone app is installed, its tile is added to Quick Settings, and access is switched on. " +
-                    "USB debugging is locked off, so from then on only this computer can connect, over Wi-Fi, while the tile is on.",
+                Text = "Once, on the phone: Settings > About phone: tap Build number 7 times. Then Settings > System > " +
+                       "Developer options: turn on \"Disable adb authorization timeout\".",
             };
+            var qr = new PictureBox
+            {
+                SizeMode = PictureBoxSizeMode.Zoom,
+                BackColor = Color.White,
+                Image = QrCode.Encode("WIFI:T:ADB;S:" + _qrName + ";P:" + _qrPass + ";;").ToBitmap(6),
+            };
+            var wifiTitle = new Label { Text = "Over Wi-Fi, no cable", Font = bold };
+            var wifi = new Label
+            {
+                Text = "Put the phone on the same Wi-Fi as this PC. In Developer options, open Wireless debugging, " +
+                       "turn it on, tap \"Pair device with QR code\" and scan this code.\r\n\r\n" +
+                       "Or tap \"Pair device with pairing code\" and type the 6 digits here:",
+            };
+            _code = new TextBox { MaxLength = 12, Font = Theme.UiFont(13f) };
+            var usbTitle = new Label { Text = "With a USB cable", Font = bold };
+            var usb = new Label { Text = "Turn on USB debugging, plug the phone in, tick \"Always allow from this computer\" and tap Allow." };
+
             _log = new TextBox
             {
-                Dock = DockStyle.Fill,
                 Multiline = true,
                 ReadOnly = true,
                 ScrollBars = ScrollBars.Vertical,
                 Font = new Font("Consolas", 9f),
             };
-            _start = new Button { Text = "Start", Dock = DockStyle.Bottom, Height = 44 };
-            _start.Click += (s, e) => Start();
-            Controls.Add(_log);
-            Controls.Add(_start);
-            Controls.Add(intro);
+            _start = new Button { Text = "Looking for your phone...", Enabled = false };
+            _start.Click += (s, e) => Watch();
+            Controls.AddRange(new Control[] { intro, qr, wifiTitle, wifi, _code, usbTitle, usb, _log, _start });
             Theme.Style(this);
             Theme.Primary(_start);
-            intro.ForeColor = Theme.Text;
+            foreach (var l in new[] { intro, wifiTitle, wifi, usbTitle, usb }) l.ForeColor = Theme.Text;
             _log.BorderStyle = BorderStyle.None;
+
+            int Measure(Label l, int width) =>
+                TextRenderer.MeasureText(l.Text, l.Font, new Size(width, int.MaxValue), TextFormatFlags.WordBreak).Height + S(2);
+            void Arrange()
+            {
+                int pad = S(16), w = ClientSize.Width;
+                intro.SetBounds(pad, S(12), w - 2 * pad, Measure(intro, w - 2 * pad));
+                int top = intro.Bottom + S(14), q = S(220);
+                qr.SetBounds(pad, top, q, q);
+                int x = pad + q + S(20), tw = Math.Max(S(200), w - x - pad);
+                wifiTitle.SetBounds(x, top, tw, Measure(wifiTitle, tw));
+                wifi.SetBounds(x, wifiTitle.Bottom + S(2), tw, Measure(wifi, tw));
+                _code.SetBounds(x, wifi.Bottom + S(4), S(150), _code.PreferredHeight);
+                usbTitle.SetBounds(x, _code.Bottom + S(18), tw, Measure(usbTitle, tw));
+                usb.SetBounds(x, usbTitle.Bottom + S(2), tw, Measure(usb, tw));
+                int logTop = Math.Max(qr.Bottom, usb.Bottom) + S(16), btn = S(46);
+                _start.SetBounds(0, ClientSize.Height - btn, w, btn);
+                _log.SetBounds(S(8), logTop, w - S(16), _start.Top - logTop - S(8));
+            }
+            Layout += (s, e) => Arrange();
             HandleCreated += (s, e) => Theme.ApplyChrome(this);
+            Shown += (s, e) => { if (_tray != null) Watch(); };
+            FormClosed += (s, e) => _closed = true;
+        }
+
+        internal static void Preview(string path)
+        {
+            using (var f = new SetupForm(null, new Config()))
+            {
+                f.StartPosition = FormStartPosition.Manual;
+                f.Location = new Point(-4000, 0);
+                f.Show();
+                Application.DoEvents();
+                f.Log("Waiting for your phone: scan the code, type a pairing code, or plug it in...");
+                Application.DoEvents();
+                using (var b = new Bitmap(f.Width, f.Height))
+                {
+                    f.DrawToBitmap(b, new Rectangle(0, 0, f.Width, f.Height));
+                    b.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+                }
+            }
         }
 
         /// <summary>Setup or pairing is running: they use the adb server, which must not be stopped meanwhile.</summary>
@@ -89,16 +154,35 @@ namespace Phonestick
             if (!_log.IsDisposed) _log.AppendText(s + "\r\n");
         }
 
-        private void Start()
+        private string CodeTyped()
         {
+            string v = "";
+            try { Invoke((Action)(() => v = _code.Text)); } catch { }
+            var digits = new string(v.Where(char.IsDigit).ToArray());
+            return digits.Length == 6 ? digits : null;
+        }
+
+        private bool _watching;
+
+        /// <summary>Waits for the phone (any of the ways shown), then sets it up.</summary>
+        private void Watch()
+        {
+            if (_watching) return;
             if (Busy) { Log("Wait: a setup or pairing is still running."); return; }
+            _watching = true;
             _start.Enabled = false;
+            _start.Text = "Looking for your phone...";
             BeginWork();
             Task.Run(() =>
             {
+                bool done = false;
                 try
                 {
-                    RunSetup();
+                    Helpers.Ensure(Log);
+                    var found = WaitForPhone();
+                    if (found.phone == null) return; // window closed
+                    RunSetup(found.phone, found.usb);
+                    done = true;
                 }
                 catch (Exception ex)
                 {
@@ -109,25 +193,82 @@ namespace Phonestick
                 {
                     EndWork();
                     Phone.StopServerIfUnused();
-                    OnUi(this, () => { _start.Enabled = true; _start.Text = "Run again"; });
+                    _watching = false;
+                    OnUi(this, () =>
+                    {
+                        _start.Enabled = !done;
+                        _start.Text = done ? "Done" : "Try again";
+                    });
+                    if (done) _tray.OpenPhoneSoon();
                 }
             });
         }
 
-        private void RunSetup()
+        private (Phone phone, bool usb) WaitForPhone()
+        {
+            Log("Waiting for your phone: scan the code, type a pairing code, or plug it in...");
+            Phone.StartServer();
+            var tried = new HashSet<string>();
+            var paired = new HashSet<string>();
+            bool toldUnauthorized = false, toldCode = false, toldMdns = false;
+            string failedCode = null;
+            var since = DateTime.UtcNow;
+            while (!_closed)
+            {
+                if (!toldMdns && DateTime.UtcNow - since > TimeSpan.FromSeconds(90))
+                {
+                    Log("Nothing yet? Check the phone is on the same Wi-Fi as this PC. If you scanned the code and nothing " +
+                        "happens, this network may hide devices from each other: plug the phone in with USB once instead.");
+                    toldMdns = true;
+                }
+                foreach (var d in Phone.Devices())
+                {
+                    if (d.usb && d.state == "unauthorized" && !toldUnauthorized)
+                    {
+                        Log("On the phone: tick \"Always allow from this computer\" and tap Allow.");
+                        toldUnauthorized = true;
+                    }
+                    if (d.state != "device" || d.serial.StartsWith("emulator-")) continue;
+                    var p = Phone.Describe(d.serial);
+                    if (p != null) return (p, d.usb);
+                }
+                foreach (var (name, endpoint) in Phone.MdnsServices("_adb-tls-pairing"))
+                {
+                    if (paired.Contains(endpoint)) continue;
+                    bool byQr = name == _qrName;
+                    string secret = byQr ? _qrPass : CodeTyped();
+                    if (secret == null || (!byQr && secret == failedCode))
+                    {
+                        if (!toldCode) Log("The phone shows a pairing code: type the 6 digits in the box above.");
+                        toldCode = true;
+                        continue;
+                    }
+                    Log("Pairing with the phone at " + endpoint + "...");
+                    var r = Phone.Adb("pair " + Tools.Q(endpoint) + " " + secret, 30000);
+                    if (r.Out.Contains("Successfully paired")) { Log("Paired. Connecting..."); paired.Add(endpoint); }
+                    else if (byQr)
+                    {
+                        Log("Pairing failed: " + r.All.Trim() + "\r\nOn the phone, scan the code again.");
+                        paired.Add(endpoint); // a new scan announces a new port
+                    }
+                    else
+                    {
+                        Log("Pairing failed: " + r.All.Trim() + "\r\nCheck the code on the phone and type it again.");
+                        failedCode = secret;
+                    }
+                }
+                // Paired phones announce themselves; adb connects on its own, this makes sure.
+                foreach (var (_, endpoint) in Phone.MdnsServices())
+                    if (tried.Add(endpoint)) Phone.Adb("connect " + endpoint, 10000);
+                Thread.Sleep(1500);
+            }
+            return (null, false);
+        }
+
+        private void RunSetup(Phone p, bool overUsb)
         {
             var pkg = AppInfo.PhonePackage;
-            Helpers.Ensure(Log);
-            Log("Looking for the phone on USB...");
-            var p = Phone.FindUsb();
-            bool overUsb = p != null;
-            if (p == null)
-            {
-                Log("No phone on USB. Looking for an already paired phone on Wi-Fi...");
-                p = Phone.FindOnWifi("", 8000);
-            }
-            if (p == null) throw new UserError("No phone found. Plug it in with USB debugging on, and allow this computer.");
-            Log("Found " + p.Model + " (" + p.SerialNo + ").");
+            Log("Found " + p.Model + " (" + p.SerialNo + ")" + (overUsb ? " on USB." : " on Wi-Fi."));
 
             var apk = Helpers.ExtractApk();
             Log("Installing the phone app...");
@@ -172,9 +313,7 @@ namespace Phonestick
                 }
                 if (wifi == null)
                     throw new UserError("This computer could not reach the phone over Wi-Fi. Check that both are on the same network " +
-                        "and that Windows lets adb.exe through the firewall. If the phone refuses this computer over Wi-Fi, " +
-                        "open Developer options > Wireless debugging > Pair device with pairing code on the phone, " +
-                        "use \"Pair with a Wi-Fi code\" in the tray menu, and run this setup again.");
+                        "and that Windows lets adb.exe through the firewall. Or pair over Wi-Fi with the QR code above and try again.");
                 Log("Wi-Fi link works.");
             }
 
@@ -191,10 +330,9 @@ namespace Phonestick
             p.Shell("am broadcast -a " + pkg + ".ARM -n " + pkg + "/.CommandReceiver", 15000);
             p.Shell("am start -n " + pkg + "/.MainActivity", 15000);
 
-            Log("\r\nDone.");
-            Log("- Unplug the phone.");
-            Log("- Tile on: this computer can reach the phone on this Wi-Fi. Tile off: nothing can.");
-            Log("- Open your files from the tray icon: Open phone files.");
+            Log("\r\nDone." + (overUsb ? " You can unplug the phone." : ""));
+            Log("Opening your phone's files now. Next time: click the tray icon, or Open phone files.");
+            Log("Tile on: this computer can reach the phone on this Wi-Fi. Tile off: nothing can.");
         }
     }
 
@@ -247,7 +385,7 @@ namespace Phonestick
                         Phone.StartServer();
                         var r = Phone.Adb("pair " + Tools.Q(endpoint) + " " + pin, 30000);
                         msg = r.Out.Contains("Successfully paired")
-                            ? "Paired. Now run \"Set up phone\" from the tray menu."
+                            ? "Paired. Now click the tray icon, then Set up your phone."
                             : "Pairing failed: " + r.All;
                     }
                     catch (Exception ex) { msg = ex.Message; }

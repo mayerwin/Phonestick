@@ -17,12 +17,26 @@ namespace Phonestick
         {
             // Internal: the "ssh" command rclone runs to reach the phone's file server.
             if (args.Length >= 2 && args[0] == "--pipe")
-                return AdbPipe.Run(args[1], "sh " + Mount.ServerScript);
+                return AdbPipe.Run(args[1], "sh " + (args.Length >= 3 && args[2] == "sd" ? Mount.SdServerScript : Mount.ServerScript));
+
+            // Internal: writes a QR code PNG, to check the encoder ("--qr-preview TEXT FILE").
+            if (args.Length >= 3 && args[0] == "--qr-preview")
+            {
+                using (var b = QrCode.Encode(args[1], args.Length >= 4 ? int.Parse(args[3]) : -1).ToBitmap(8)) b.Save(args[2], System.Drawing.Imaging.ImageFormat.Png);
+                return 0;
+            }
 
             // Internal: renders the tray glyph at every size to a PNG sheet, for design review.
             if (args.Length >= 2 && args[0] == "--tray-preview")
             {
                 TrayPreview(args[1]);
+                return 0;
+            }
+
+            // Internal: renders the setup window to a PNG without looking for a phone, for design review.
+            if (args.Length >= 2 && args[0] == "--setup-preview")
+            {
+                SetupForm.Preview(args[1]);
                 return 0;
             }
 

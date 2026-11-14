@@ -66,7 +66,7 @@ namespace Phonestick
             return list;
         }
 
-        private static Phone Describe(string serial)
+        public static Phone Describe(string serial)
         {
             var p = new Phone { Serial = serial };
             p.SerialNo = p.Shell("getprop ro.serialno", 15000).Out.Trim();
@@ -116,12 +116,12 @@ namespace Phonestick
         }
 
         /// <summary>(service name, ip:port) for each wireless debugging endpoint seen on the LAN.</summary>
-        public static List<(string name, string endpoint)> MdnsServices()
+        public static List<(string name, string endpoint)> MdnsServices(string type = "_adb-tls-connect")
         {
             var list = new List<(string, string)>();
             foreach (var line in Adb("mdns services", 15000).Out.Split('\n'))
             {
-                if (!line.Contains("_adb-tls-connect")) continue;
+                if (!line.Contains(type + ".")) continue;
                 var parts = line.Trim().Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
                 var ep = parts.FirstOrDefault(x => Regex.IsMatch(x, @"^\d+\.\d+\.\d+\.\d+:\d+$"));
                 if (ep != null) list.Add((parts[0], ep));

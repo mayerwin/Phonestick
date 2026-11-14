@@ -2,7 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Four permissions. No INTERNET, no location, no foreground service.
+    <!-- No INTERNET, no location, no notifications.
          WRITE_SECURE_SETTINGS cannot be requested by the app: it is granted once
          from a computer with `adb shell pm grant`. -->
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS"
@@ -12,6 +12,13 @@
     <!-- Lets the app ask once to be exempt from Doze, so Android does not hold back its
          wake-ups while the phone sits idle. The app does no work while idle. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- The listener that runs while access is on (ListenService). CHANGE_NETWORK_STATE is
+         what Android requires for the "connected device" kind of service; the app does not
+         change any network setting. No notification permission is asked, so on Android 13
+         and later the listener shows no notification. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
 
     <application
         android:label="@string/app_name"
@@ -42,6 +49,11 @@
                 android:name="android.service.quicksettings.TOGGLEABLE_TILE"
                 android:value="true" />
         </service>
+
+        <service
+            android:name=".ListenService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
 
         <service
             android:name=".WatchJob"

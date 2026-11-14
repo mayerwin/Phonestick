@@ -12,14 +12,14 @@ public class WatchJob extends JobService {
         try {
             switch (id) {
                 case Access.JOB_WIFI_WATCH:
+                    // The listener reacts faster and would count the same change twice.
+                    if (ListenService.running) break;
                     new Prefs(this).log("woken: wireless debugging setting changed");
                     Access.ensureWifi(this, params.getNetwork(), true, "setting changed");
                     break;
                 case Access.JOB_ENSURE:
-                    Access.ensureWifi(this, params.getNetwork(), false, "check");
-                    break;
-                case Access.JOB_SAFETY:
-                    Access.ensureWifi(this, params.getNetwork(), false, "safety check", true);
+                    boolean recheck = params.getExtras().getBoolean("recheck", false);
+                    Access.ensureWifi(this, params.getNetwork(), false, recheck ? "re-check" : "check", recheck);
                     break;
                 case Access.JOB_USB_WATCH:
                     Access.enforceUsb(this);

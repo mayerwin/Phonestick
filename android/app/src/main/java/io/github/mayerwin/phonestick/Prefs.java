@@ -42,6 +42,9 @@ final class Prefs {
 
     long lastWriteAt() { return sp.getLong("lastWriteAt", 0); }
     void lastWriteAt(long v) { sp.edit().putLong("lastWriteAt", v).commit(); }
+    /** True when the last write needs no look again (a re-check or a nudge). */
+    boolean lastWriteFinal() { return sp.getBoolean("lastWriteFinal", false); }
+    void lastWrite(long at, boolean fin) { sp.edit().putLong("lastWriteAt", at).putBoolean("lastWriteFinal", fin).commit(); }
 
 
     /** Whether our tile is in Quick Settings (from the tile's added/removed callbacks). */

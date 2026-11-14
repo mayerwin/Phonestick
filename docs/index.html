@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Phonestick: your Android phone as a USB stick, over Wi-Fi</title>
-<meta name="description" content="Phonestick puts your Android phone in Windows Explorer as a drive, over your home Wi-Fi. No cable, no cloud, nothing running in the background. Only your PC can connect, and only while the tile is on. Free and open source.">
+<meta name="description" content="Phonestick puts your Android phone in Windows Explorer as a drive, over your home Wi-Fi. No cable, no cloud, no account. Only your PC can connect, and only while the tile is on. Free and open source.">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Phonestick: your phone as a USB stick, over Wi-Fi">
-<meta property="og:description" content="Your Android phone as drive P: in Windows Explorer. No cable, no cloud, no background app. Only your PC, only when you want.">
+<meta property="og:description" content="Your Android phone as drive P: in Windows Explorer. No cable, no cloud, no account. Only your PC, only when you want.">
 <meta property="og:image" content="https://mayerwin.github.io/Phonestick/assets/og.png">
 <meta property="og:url" content="https://mayerwin.github.io/Phonestick/">
 <meta name="twitter:card" content="summary_large_image">
@@ -279,7 +279,7 @@
     <div>
       <div class="eyebrow"><b>Free</b> Open source, for Windows and Android</div>
       <h1>Your phone,<br>as a <em>USB stick</em>.<br>Over Wi-Fi.</h1>
-      <p class="lead">Phonestick puts your Android phone in Windows Explorer as drive <b>P:</b>. No cable, no cloud, no app running in the background. Only your PC can reach it, and only while the tile is on.</p>
+      <p class="lead">Phonestick puts your Android phone in Windows Explorer as drive <b>P:</b>. No cable, no cloud, no account. Only your PC can reach it, and only while the tile is on.</p>
       <div class="cta">
         <a class="btn primary" href="https://github.com/mayerwin/Phonestick/releases/latest/download/Phonestick.exe"><svg><use href="#i-download"/></svg>Download for Windows</a>
         <a class="btn tonal" href="#start">Get started<svg><use href="#i-arrow"/></svg></a>
@@ -364,7 +364,7 @@
     <div class="promises">
       <div class="card reveal"><div class="ic"><svg><use href="#i-key"/></svg></div><h3>Only your computer</h3><p>The connection is encrypted and needs a key only your paired PC holds. USB debugging stays locked off, so another computer or a public charging port gets nothing.</p></div>
       <div class="card reveal"><div class="ic"><svg><use href="#i-power"/></svg></div><h3>Only when you want</h3><p>One Quick Settings tile. On: your PC can connect, on the Wi-Fi networks you approved. Off: nothing on the phone is listening.</p></div>
-      <div class="card reveal"><div class="ic"><svg><use href="#i-leaf"/></svg></div><h3>Nothing in the background</h3><p>The phone app is 85 KB, has no internet or location permission and never runs on its own. Android wakes it for a moment when Wi-Fi changes. That's it.</p></div>
+      <div class="card reveal"><div class="ic"><svg><use href="#i-leaf"/></svg></div><h3>Light as a feather</h3><p>The phone app is 95 KB and has no internet or location permission. While the tile is on, a tiny listener sleeps until Wi-Fi changes. With the tile off, nothing runs.</p></div>
     </div>
   </div>
 </section>
@@ -457,7 +457,7 @@
       <h2>FAQ</h2>
     </div>
     <details class="reveal"><summary>Does it need root?</summary><p>No. The phone app gets one permission, granted once from your computer over adb, which lets it switch Wireless debugging on and off.</p></details>
-    <details class="reveal"><summary>Does it use battery or data?</summary><p>No mobile data: everything stays on your Wi-Fi. The phone app never runs in the background; Android wakes it for a moment when Wi-Fi or a debugging switch changes. With the tile off it does nothing at all.</p></details>
+    <details class="reveal"><summary>Does it use battery or data?</summary><p>No mobile data: everything stays on your Wi-Fi. While the tile is on, the phone app keeps a tiny listener that sleeps until Wi-Fi or a debugging switch changes: no polling, no timers. With the tile off it does nothing at all.</p></details>
     <details class="reveal"><summary>Why Wireless debugging, and is that safe?</summary><p>It is Android's built-in, encrypted and authenticated way for a trusted computer to reach the phone. Only paired computers can connect. Phonestick keeps it limited to your approved networks and locks USB debugging off.</p></details>
     <details class="reveal"><summary>How fast is it?</summary><p>On a typical home Wi-Fi, around 10 MB/s, so a 300 MB video copies in about half a minute. Photos and documents open straight from the drive.</p></details>
     <details class="reveal"><summary>What can my computer see?</summary><p>Shared storage: DCIM, Download, Documents, Pictures, Music, Movies and app media folders, the same things a USB cable shows. Other apps' private data stays private.</p></details>

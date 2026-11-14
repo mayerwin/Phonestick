@@ -19,6 +19,11 @@ final class Adb {
                 == PackageManager.PERMISSION_GRANTED;
     }
 
+    /** Up to Android 16 apps can read the debugging switches; since 17 they are shown 0. */
+    static boolean readable() {
+        return android.os.Build.VERSION.SDK_INT < 37;
+    }
+
     static int get(Context c, String key) {
         return Settings.Global.getInt(c.getContentResolver(), key, 0);
     }

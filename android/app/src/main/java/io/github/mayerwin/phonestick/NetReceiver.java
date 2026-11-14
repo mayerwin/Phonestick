@@ -12,5 +12,6 @@ public class NetReceiver extends BroadcastReceiver {
         if (!p.armed()) return;
         p.log("woken: Wi-Fi connected");
         Access.scheduleEnsure(c, 3_000);
+        ListenService.start(c); // in case Android stopped it
     }
 }

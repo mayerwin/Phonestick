@@ -186,6 +186,8 @@ namespace Phonestick
             {
                 if (cancelled()) throw new OperationCanceledException();
                 proc = Process.Start(psi);
+                // Tied to this app: if Phonestick ends in any way, Windows ends rclone and the drive goes.
+                ChildJob.Add(proc);
                 proc.EnableRaisingEvents = true;
                 proc.Exited += (s, e) => Ended?.Invoke();
                 _rclone = proc;

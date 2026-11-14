@@ -164,6 +164,9 @@ namespace Phonestick
                 p.OutputDataReceived += (s, a) => { if (a.Data != null) lock (o) o.AppendLine(a.Data); else try { outDone.Set(); } catch { } };
                 p.ErrorDataReceived += (s, a) => { if (a.Data != null) lock (e) e.AppendLine(a.Data); else try { errDone.Set(); } catch { } };
                 p.Start();
+                // adb may start our private adb server: that server then belongs to the job too, so
+                // the link to the phone also closes if Phonestick ends unexpectedly.
+                if (string.Equals(Path.GetFileName(exe), "adb.exe", StringComparison.OrdinalIgnoreCase)) ChildJob.Add(p);
                 p.BeginOutputReadLine();
                 p.BeginErrorReadLine();
                 if (!p.WaitForExit(timeoutMs))

@@ -51,7 +51,7 @@ It also gives your computer a proper link to the phone: mirror its screen with o
     </td>
     <td width="33%" valign="top">
       <h3>🔋 Zero background cost</h3>
-      The phone app is 85 KB, has no internet or location permission and never runs on its own. Android wakes it for a moment when Wi-Fi changes.
+      The phone app is 85 KB, has no internet or location permission and has no background service. Android wakes it for a moment when Wi-Fi changes, and while the tile is on, for a few milliseconds every 15 minutes.
     </td>
   </tr>
   <tr>
@@ -145,7 +145,7 @@ Phonestick adds no new server and no new protocol. It uses Android's own Wireles
 - The tile arms or disarms access. While armed, the app turns Wireless debugging back on whenever Android turns it off, if the phone is on an approved network.
 - It learns approved networks by itself: switch the tile on at home and that network is remembered. Without location permission (Android hides Wi-Fi names from apps without it) it recognises a network by its gateway and subnet.
 - The first time a new access point is used, Android itself asks "Allow wireless debugging on this network?". Tick "Always allow" once per access point.
-- It reacts to Android's event hooks only: a network callback (Wi-Fi connected) and JobScheduler content triggers (a debugging switch changed). An optional "Check every 15 minutes" switch (off by default) is there if access ever drops by itself anyway.
+- It reacts to Android's event hooks only: a network callback (Wi-Fi connected) and JobScheduler content triggers (a debugging switch changed). Some changes come with no event at all (Android 17 hides the debugging switches from apps, and moving to another access point keeps the same network), so while the tile is on a check also runs every 15 minutes and turns Wireless debugging back on if Android dropped it. Opening Quick Settings checks too.
 - A short event log on the app's screen shows what it did and why.
 - The app only writes the debugging switches and never relies on reading them: since Android 17, apps are told developer options are off whatever their real state.
 
@@ -167,7 +167,7 @@ Phonestick adds no new server and no new protocol. It uses Android's own Wireles
 
 **Does it need root?** No. The phone app gets one permission, granted once from your computer over adb.
 
-**Does it use battery or data?** No mobile data: everything stays on your Wi-Fi. The phone app never runs in the background. With the tile off it does nothing at all.
+**Does it use battery or data?** No mobile data: everything stays on your Wi-Fi. The phone app has no background service: while the tile is on it wakes for a few milliseconds when Wi-Fi changes and every 15 minutes. With the tile off it does nothing at all.
 
 **How fast is it?** Around 10 MB/s on a typical home Wi-Fi, so a 300 MB video copies in about half a minute.
 

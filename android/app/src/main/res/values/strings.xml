@@ -53,8 +53,6 @@
     <string name="usb_lock">Lock USB debugging</string>
     <string name="usb_lock_help">Plugging the phone into any computer or charger gives no access. Only your paired computer connects, over Wi-Fi, while access is on.</string>
 
-    <string name="safety">Check every 15 minutes</string>
-    <string name="safety_help">Only if access ever drops by itself: while access is on, quickly turns wireless debugging back on about every 15 minutes. Off by default.</string>
 
     <string name="events_title">Recent events</string>
     <string name="events_none">Nothing yet.</string>

@@ -43,9 +43,6 @@ final class Prefs {
     long lastWriteAt() { return sp.getLong("lastWriteAt", 0); }
     void lastWriteAt(long v) { sp.edit().putLong("lastWriteAt", v).commit(); }
 
-    /** Optional 15-minute safety check while access is on (off by default). */
-    boolean safetyCheck() { return sp.getBoolean("safetyCheck", false); }
-    void safetyCheck(boolean v) { sp.edit().putBoolean("safetyCheck", v).apply(); }
 
     /** Whether our tile is in Quick Settings (from the tile's added/removed callbacks). */
     boolean tileAdded() { return sp.getBoolean("tileAdded", false); }

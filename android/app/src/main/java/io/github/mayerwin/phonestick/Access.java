@@ -41,9 +41,10 @@ final class Access {
     /**
      * Since Android 17 apps are not told when wireless debugging is switched off (the setting
      * is hidden from them, change notifications included), and Android switches it off by
-     * itself after a while without use. An optional safety check (off by default) runs about
-     * every 15 minutes on Wi-Fi while access is on and switches it back on. Each run takes a few
-     * milliseconds.
+     * itself after a while without use, or when the phone moves to another access point. So a
+     * safety check always runs about every 15 minutes on Wi-Fi while access is on (a few
+     * milliseconds each, batched by Android with other work) and switches it back on: whatever
+     * event is missed, access never stays broken for long. It survives reboots.
      */
     private static final long SAFETY_PERIOD_MS = 15 * 60_000;
     private static final int JOB_PROBE_OLD = 3; // removed; cancelled on restore
@@ -238,17 +239,9 @@ final class Access {
         c.getSystemService(JobScheduler.class).schedule(ji);
     }
 
-    static void setSafetyCheck(Context c, boolean on) {
-        Prefs p = new Prefs(c);
-        p.safetyCheck(on);
-        p.log(on ? "15-minute safety check on" : "15-minute safety check off");
-        if (on) scheduleSafety(c);
-        else c.getSystemService(JobScheduler.class).cancel(JOB_SAFETY);
-    }
-
     static void scheduleSafety(Context c) {
         Prefs p = new Prefs(c);
-        if (!p.armed() || !p.safetyCheck()) {
+        if (!p.armed()) {
             c.getSystemService(JobScheduler.class).cancel(JOB_SAFETY);
             return;
         }

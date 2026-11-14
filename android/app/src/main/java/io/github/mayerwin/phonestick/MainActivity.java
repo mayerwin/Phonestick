@@ -162,16 +162,6 @@ public class MainActivity extends Activity {
             v.postDelayed(this::render, 200);
         });
         sec.addView(row(R.drawable.ic_l_shield, getString(R.string.usb_lock), getString(R.string.usb_lock_help), usb));
-        sec.addView(divider());
-        Switch safety = new Switch(this);
-        safety.setChecked(p.safetyCheck());
-        safety.setThumbTintList(usb.getThumbTintList());
-        safety.setTrackTintList(usb.getTrackTintList());
-        safety.setOnCheckedChangeListener((v, on) -> {
-            Access.setSafetyCheck(this, on);
-            v.postDelayed(this::render, 200);
-        });
-        sec.addView(row(R.drawable.ic_l_activity, getString(R.string.safety), getString(R.string.safety_help), safety));
         root.addView(sec);
 
         root.addView(label(getString(R.string.events_title)));

@@ -408,6 +408,7 @@ namespace Phonestick
                 Tools.ApplyAdbEnv(psi);
                 var err = new System.Text.StringBuilder();
                 var proc = Process.Start(psi);
+                ChildJob.Add(proc); // the screen window closes with Phonestick, whatever ends it
                 proc.ErrorDataReceived += (s, e) => { if (e.Data != null) lock (err) err.AppendLine(e.Data); };
                 proc.OutputDataReceived += (s, e) => { if (e.Data != null) lock (err) err.AppendLine(e.Data); };
                 proc.BeginErrorReadLine();

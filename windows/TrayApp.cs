@@ -444,10 +444,20 @@ namespace Phonestick
 
         private Phone FindPhone()
         {
-            var p = Phone.FindOnWifi(_cfg.PhoneSerial, 15000, _cfg.LastEndpoint);
-            if (p != null && System.Text.RegularExpressions.Regex.IsMatch(p.Serial, @"^\d+\.\d+\.\d+\.\d+:\d+$") && p.Serial != _cfg.LastEndpoint)
+            var p = Phone.FindOnWifi(_cfg.PhoneSerial, 20000, _cfg.LastEndpoint);
+            if (p == null && Phone.LastFindSawService && !_cancelled && !ScreenOpen && !_mount.IsMounted)
             {
-                _cfg.LastEndpoint = p.Serial;
+                // The phone offers wireless debugging but adb did not get through: start adb afresh once.
+                Log.Write("phone seen but not connected: restarting adb");
+                Phone.StopServer();
+                StopIfCancelled();
+                p = Phone.FindOnWifi(_cfg.PhoneSerial, 15000, Phone.LastFoundEndpoint ?? _cfg.LastEndpoint);
+            }
+            StopIfCancelled();
+            var seen = Phone.LastFoundEndpoint ?? (p != null && System.Text.RegularExpressions.Regex.IsMatch(p.Serial, @"^\d+\.\d+\.\d+\.\d+:\d+$") ? p.Serial : null);
+            if (seen != null && seen != _cfg.LastEndpoint)
+            {
+                _cfg.LastEndpoint = seen; // its address is asked first next time
                 _cfg.Save();
             }
             // Not after a cancel or disconnect: the adb command would start the server again.
@@ -466,6 +476,9 @@ namespace Phonestick
                     }
                     catch { }
                 }
+                if (Phone.LastFindSawService)
+                    throw new UserError("Your phone has Wireless debugging on, but did not let this computer in.\n\n" +
+                        "If this computer was removed from the phone's paired devices, set it up again: click the tray icon, the gear, then Set up a phone.");
                 throw new UserError(answers
                     ? "Your phone is on this network, but it is not accepting connections.\n\n" +
                       "Pull down Quick Settings and check the " + AppInfo.Name + " tile is on. If it already is, tap it off and on."

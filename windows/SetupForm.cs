@@ -85,7 +85,8 @@ namespace Phonestick
                 Font = new Font("Consolas", 9f),
             };
             _start = new Button { Text = "Looking for your phone...", Enabled = false };
-            _start.Click += (s, e) => Watch();
+            // While looking: confirms a phone that was already paired. Otherwise: looks again.
+            _start.Click += (s, e) => { if (_watching) { _confirmed = true; _start.Enabled = false; } else Watch(); };
             Controls.AddRange(new Control[] { intro, qr, wifiTitle, wifi, _code, usbTitle, usb, _log, _start });
             Theme.Style(this);
             Theme.Primary(_start);
@@ -204,22 +205,34 @@ namespace Phonestick
             });
         }
 
+        private volatile bool _confirmed;
+
+        /// <summary>
+        /// Waits for a phone. A USB phone, or one paired in this window (QR code or typed code),
+        /// goes straight on. A phone this PC was already paired with only after a click, so
+        /// opening this window never sets up a phone by itself.
+        /// </summary>
         private (Phone phone, bool usb) WaitForPhone()
         {
             Log("Waiting for your phone: scan the code, type a pairing code, or plug it in...");
             Phone.StartServer();
-            var tried = new HashSet<string>();
-            var paired = new HashSet<string>();
-            bool toldUnauthorized = false, toldCode = false, toldMdns = false;
+            _confirmed = false;
+            var lastTry = new Dictionary<string, DateTime>();
+            var pairedHosts = new HashSet<string>();
+            var failedPairing = new HashSet<string>();
+            string offered = null;
+            bool toldUnauthorized = false, toldCode = false, toldHint = false;
             string failedCode = null;
             var since = DateTime.UtcNow;
             while (!_closed)
             {
-                if (!toldMdns && DateTime.UtcNow - since > TimeSpan.FromSeconds(90))
+                if (DateTime.UtcNow - since > TimeSpan.FromMinutes(10))
+                    throw new UserError("Stopped looking after 10 minutes. Click Try again when the phone is ready.");
+                if (!toldHint && DateTime.UtcNow - since > TimeSpan.FromSeconds(90))
                 {
-                    Log("Nothing yet? Check the phone is on the same Wi-Fi as this PC. If you scanned the code and nothing " +
-                        "happens, this network may hide devices from each other: plug the phone in with USB once instead.");
-                    toldMdns = true;
+                    Log("Nothing yet? Check that the phone is on the same Wi-Fi as this PC, with Wireless debugging on. " +
+                        "Or plug it in with USB once instead.");
+                    toldHint = true;
                 }
                 foreach (var d in Phone.Devices())
                 {
@@ -230,11 +243,24 @@ namespace Phonestick
                     }
                     if (d.state != "device" || d.serial.StartsWith("emulator-")) continue;
                     var p = Phone.Describe(d.serial);
-                    if (p != null) return (p, d.usb);
+                    if (p == null) continue;
+                    if (d.usb || pairedHosts.Count > 0 || _confirmed) return (p, d.usb); // explicit action: go on
+                    if (offered != p.SerialNo)
+                    {
+                        offered = p.SerialNo;
+                        Log("Found " + p.Model + ", already paired with this PC. Click the button below to set it up, " +
+                            "or pair another phone.");
+                        var label = "Set up " + p.Model;
+                        OnUi(this, () => { _start.Text = label; _start.Enabled = true; });
+                    }
                 }
-                foreach (var (name, endpoint) in Phone.MdnsServices("_adb-tls-pairing"))
+
+                // Pairing: asked of the phones directly (see Mdns), then adb's own discovery.
+                var pairing = Mdns.Find(Mdns.Pairing).Select(x => (x.Instance, x.Endpoint)).ToList();
+                pairing.AddRange(Phone.MdnsServices("_adb-tls-pairing").Where(x => !pairing.Any(y => y.Endpoint == x.endpoint)));
+                foreach (var (name, endpoint) in pairing)
                 {
-                    if (paired.Contains(endpoint)) continue;
+                    if (failedPairing.Contains(endpoint)) continue;
                     bool byQr = name == _qrName;
                     string secret = byQr ? _qrPass : CodeTyped();
                     if (secret == null || (!byQr && secret == failedCode))
@@ -245,11 +271,16 @@ namespace Phonestick
                     }
                     Log("Pairing with the phone at " + endpoint + "...");
                     var r = Phone.Adb("pair " + Tools.Q(endpoint) + " " + secret, 30000);
-                    if (r.Out.Contains("Successfully paired")) { Log("Paired. Connecting..."); paired.Add(endpoint); }
+                    if (r.Out.Contains("Successfully paired"))
+                    {
+                        Log("Paired. Connecting...");
+                        pairedHosts.Add(endpoint.Split(':')[0]);
+                        failedPairing.Add(endpoint); // done with this pairing port
+                    }
                     else if (byQr)
                     {
                         Log("Pairing failed: " + r.All.Trim() + "\r\nOn the phone, scan the code again.");
-                        paired.Add(endpoint); // a new scan announces a new port
+                        failedPairing.Add(endpoint); // a new scan announces a new port
                     }
                     else
                     {
@@ -257,10 +288,17 @@ namespace Phonestick
                         failedCode = secret;
                     }
                 }
-                // Paired phones announce themselves; adb connects on its own, this makes sure.
-                foreach (var (_, endpoint) in Phone.MdnsServices())
-                    if (tried.Add(endpoint)) Phone.Adb("connect " + endpoint, 10000);
-                Thread.Sleep(1500);
+
+                // Paired phones: connect to them (only paired ones can be reached).
+                var connect = Mdns.Find(Mdns.Connect).Select(x => x.Endpoint).ToList();
+                connect.AddRange(Phone.MdnsServices().Select(x => x.endpoint).Where(e => !connect.Contains(e)));
+                foreach (var endpoint in connect)
+                {
+                    if (lastTry.TryGetValue(endpoint, out var t) && DateTime.UtcNow - t < TimeSpan.FromSeconds(5)) continue;
+                    lastTry[endpoint] = DateTime.UtcNow;
+                    Phone.Adb("connect " + endpoint, 10000);
+                }
+                Thread.Sleep(700);
             }
             return (null, false);
         }

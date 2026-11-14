@@ -78,20 +78,48 @@ namespace Phonestick
         /// Finds the configured phone on the Wi-Fi network: already connected, or announced
         /// over mDNS as _adb-tls-connect. Only the phone whose ro.serialno matches is used.
         /// </summary>
+        /// <summary>What the last FindOnWifi saw, to tell the user what is wrong when it fails.</summary>
+        public static bool LastFindSawService;
+        /// <summary>The phone's ip:port as last found by a direct mDNS query, to remember for next time.</summary>
+        public static string LastFoundEndpoint;
+
+        public static bool NameMatches(string instance, string serialNo) =>
+            serialNo == "" || instance.Contains("-" + serialNo + "-") || instance == "adb-" + serialNo;
+
         public static Phone FindOnWifi(string wantedSerialNo, int waitMs = 15000, string lastEndpoint = null)
         {
             StartServer();
+            LastFindSawService = false;
+            LastFoundEndpoint = null;
             var deadline = DateTime.UtcNow.AddMilliseconds(waitMs);
-            var tried = new HashSet<string>();
-            int round = 0;
+            var lastTry = new Dictionary<string, DateTime>();
+            var offlineSince = new Dictionary<string, DateTime>();
+            System.Net.IPAddress lastIp = null;
+            if (!string.IsNullOrEmpty(lastEndpoint)) System.Net.IPAddress.TryParse(lastEndpoint.Split(':')[0], out lastIp);
+
+            bool TryConnect(string endpoint)
+            {
+                if (lastTry.TryGetValue(endpoint, out var t) && DateTime.UtcNow - t < TimeSpan.FromSeconds(4)) return false;
+                lastTry[endpoint] = DateTime.UtcNow;
+                var r = Adb("connect " + endpoint, 10000);
+                Log.Write("adb connect " + endpoint + ": " + r.All.Trim());
+                return true;
+            }
+
             while (true)
             {
                 foreach (var d in Devices().Where(d => !d.usb))
                 {
                     if (d.state == "offline")
                     {
-                        // Stale transport (old port, or an mDNS auto-connect that never came up).
-                        Adb("disconnect " + Tools.Q(d.serial), 10000);
+                        // A transport still coming up shows offline for a moment: only one that
+                        // stays offline is stale (old port), and is dropped so it can be redone.
+                        if (!offlineSince.ContainsKey(d.serial)) offlineSince[d.serial] = DateTime.UtcNow;
+                        else if (DateTime.UtcNow - offlineSince[d.serial] > TimeSpan.FromSeconds(5))
+                        {
+                            Adb("disconnect " + Tools.Q(d.serial), 10000);
+                            offlineSince.Remove(d.serial);
+                        }
                         continue;
                     }
                     if (d.state != "device") continue;
@@ -99,19 +127,19 @@ namespace Phonestick
                     var p = Describe(d.serial);
                     if (p != null && (wantedSerialNo == "" || p.SerialNo == wantedSerialNo)) return p;
                 }
-                foreach (var (name, endpoint) in MdnsServices())
+                // Ask the phone itself where wireless debugging listens (fast and reliable, see
+                // Mdns), then adb's own discovery as a second source.
+                foreach (var s in Mdns.Find(Mdns.Connect, lastIp).Where(s => NameMatches(s.Instance, wantedSerialNo)))
                 {
-                    if (wantedSerialNo != "" && !name.Contains("-" + wantedSerialNo + "-") && !name.Contains("adb-" + wantedSerialNo)) continue;
-                    if (!tried.Add(endpoint)) continue;
-                    Adb("connect " + endpoint, 20000);
+                    LastFindSawService = true;
+                    LastFoundEndpoint = s.Endpoint;
+                    lastIp = s.Address;
+                    TryConnect(s.Endpoint);
                 }
-                // mDNS can miss the announcement for a while (seen right after pairing):
-                // the last address that worked often still does.
-                if (round == 3 && !string.IsNullOrEmpty(lastEndpoint) && tried.Add(lastEndpoint))
-                    Adb("connect " + lastEndpoint, 10000);
+                foreach (var (name, endpoint) in MdnsServices())
+                    if (NameMatches(name, wantedSerialNo)) { LastFindSawService = true; TryConnect(endpoint); }
                 if (DateTime.UtcNow > deadline) return null;
-                round++;
-                Thread.Sleep(1000);
+                Thread.Sleep(300);
             }
         }
 

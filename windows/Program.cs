@@ -33,6 +33,17 @@ namespace Phonestick
                 return 0;
             }
 
+            // Internal: lists the phones answering a direct mDNS query, to check discovery.
+            if (args.Length >= 2 && args[0] == "--mdns-test")
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var lines = Mdns.Find(args[1] == "pair" ? Mdns.Pairing : Mdns.Connect, args.Length >= 4 ? System.Net.IPAddress.Parse(args[3]) : null)
+                    .Select(x => x.Instance + " " + x.Endpoint + " (" + x.Host + ")");
+                System.IO.File.WriteAllText(args.Length >= 3 ? args[2] : "mdns.txt",
+                    string.Join("\r\n", lines) + "\r\n" + sw.ElapsedMilliseconds + " ms\r\n");
+                return 0;
+            }
+
             // Internal: renders the setup window to a PNG without looking for a phone, for design review.
             if (args.Length >= 2 && args[0] == "--setup-preview")
             {

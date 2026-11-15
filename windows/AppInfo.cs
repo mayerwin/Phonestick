@@ -7,7 +7,7 @@ namespace Phonestick
         /// <summary>Android applicationId of the phone app.</summary>
         public const string PhonePackage = "io.github.mayerwin.phonestick";
         /// <summary>versionCode of the phone app built into this exe. Keep equal to android/app/build.gradle.</summary>
-        public const int PhoneAppVersion = 10;
+        public const int PhoneAppVersion = 11;
         /// <summary>Folder on the phone (adb shell side) holding the file server.</summary>
         public const string PhoneDir = "/data/local/tmp/phonestick";
         /// <summary>The file server scripts on the phone: internal storage, and the SD card.</summary>

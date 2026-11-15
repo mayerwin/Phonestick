@@ -532,7 +532,7 @@ namespace Phonestick
         [DllImport("shcore.dll")]
         private static extern int GetDpiForMonitor(IntPtr mon, int type, out uint x, out uint y);
 
-        private static float DpiScaleAt(Point pt)
+        internal static float DpiScaleAt(Point pt)
         {
             try
             {

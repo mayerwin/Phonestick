@@ -404,6 +404,8 @@ namespace Phonestick
             Log("\r\nDone." + (overUsb ? " You can unplug the phone." : ""));
             Log("Opening your phone's files now. Next time: click the tray icon, or Open phone files.");
             Log("Tile on: this computer can reach the phone on this Wi-Fi. Tile off: nothing can.");
+            Log("Normal: Android asks \"Allow wireless debugging on this network?\" once more for each other access point " +
+                "(a repeater, a mesh unit, often each band of the router). Tick Always allow each time and it stops.");
         }
     }
 

@@ -125,7 +125,8 @@ namespace Phonestick
         /// Finds the configured phone on the Wi-Fi network: already connected, or announced
         /// over mDNS as _adb-tls-connect. Only the phone whose ro.serialno matches is used.
         /// </summary>
-        public static Phone FindOnWifi(string wantedSerialNo, int waitMs = 15000, string lastEndpoint = null)
+        /// <param name="cancelled">Checked each round: true ends the search at once (OperationCanceledException).</param>
+        public static Phone FindOnWifi(string wantedSerialNo, int waitMs = 15000, string lastEndpoint = null, Func<bool> cancelled = null)
         {
             LastFindSawService = false;
             LastFoundEndpoint = null;
@@ -154,6 +155,7 @@ namespace Phonestick
 
             while (true)
             {
+                if (cancelled != null && cancelled()) throw new OperationCanceledException();
                 foreach (var d in Devices().Where(d => !d.usb))
                 {
                     if (d.state == "offline")
@@ -191,6 +193,7 @@ namespace Phonestick
                         if (NameMatches(name, wantedSerialNo)) { LastFindSawService = true; connected |= TryConnect(endpoint); }
                 if (connected) continue; // look at the devices again right away (also past the deadline)
                 if (DateTime.UtcNow > deadline) return null;
+                if (cancelled != null && cancelled()) throw new OperationCanceledException();
                 Thread.Sleep(300);
             }
         }

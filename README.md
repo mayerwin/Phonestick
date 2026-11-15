@@ -105,6 +105,9 @@ No cable needed. (USB works too: turn on USB debugging, plug in and allow the co
 
 **Every day:** flip the tile on, click the tray icon, **Open phone files**. `P:` opens in Explorer.
 
+> [!TIP]
+> **"Allow wireless debugging on this network?" a few more times: that's normal.** Android trusts each Wi-Fi access point separately, not the network name. A router and its repeater or mesh units count as different access points, and often so does each band (2.4 and 5 GHz) of the same box. So the first time the phone uses each one, Android asks once. Tick **Always allow on this network** and tap **Allow**: after a handful, it never asks again. Only Android's own dialog can approve an access point, so Phonestick cannot do it for you. If you dismiss the prompt, Phonestick doesn't keep bringing it back.
+
 > [!NOTE]
 > Phonestick is portable. Its settings and log live in a `Phonestick.config` folder next to the exe. Delete both and nothing is left behind (apart from the helpers, which you can remove from Windows Settings › Apps).
 

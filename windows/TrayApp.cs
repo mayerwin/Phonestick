@@ -386,7 +386,7 @@ namespace Phonestick
                 long found;
                 for (int attempt = 0; ; attempt++)
                 {
-                    p = FindPhone();
+                    p = FindPhone(log);
                     found = sw.ElapsedMilliseconds;
                     StopIfCancelled();
                     try
@@ -399,7 +399,7 @@ namespace Phonestick
                         // Android cuts Wireless debugging when the phone moves to another access
                         // point; the phone app turns it back on within a second or two.
                         Log.Write("connection dropped while getting the phone ready: trying again");
-                        log("Connecting again...");
+                        log("The connection dropped: connecting again...");
                     }
                 }
                 long mounted = sw.ElapsedMilliseconds;
@@ -428,7 +428,7 @@ namespace Phonestick
             {
                 Helpers.Ensure(log);
                 StopIfCancelled();
-                var p = FindPhone();
+                var p = FindPhone(log);
                 StopIfCancelled();
                 var psi = new ProcessStartInfo(Tools.Scrcpy, "-s " + Tools.Q(p.Serial) + " --window-title " + Tools.Q(p.Model)
                     + " --stay-awake")
@@ -477,16 +477,22 @@ namespace Phonestick
             });
         }
 
-        private Phone FindPhone()
+        /// <summary>Shown while the phone is looked for; the hint (second line) only if it takes a while.</summary>
+        private const string LookingStep = "Looking for your phone on Wi-Fi...\n" +
+            "Taking a while? Check that the phone is on this Wi-Fi, its " + AppInfo.Name + " tile is on, and no prompt is waiting on its screen.";
+
+        private Phone FindPhone(Action<string> log)
         {
-            var p = Phone.FindOnWifi(_cfg.PhoneSerial, 20000, _cfg.LastEndpoint);
+            log(LookingStep);
+            var p = Phone.FindOnWifi(_cfg.PhoneSerial, 20000, _cfg.LastEndpoint, () => _cancelled);
             if (p == null && Phone.LastFindSawService && !_cancelled && !ScreenOpen && !_mount.IsMounted)
             {
                 // The phone offers wireless debugging but adb did not get through: start adb afresh once.
                 Log.Write("phone seen but not connected: restarting adb");
                 Phone.StopServer();
                 StopIfCancelled();
-                p = Phone.FindOnWifi(_cfg.PhoneSerial, 15000, Phone.LastFoundEndpoint ?? _cfg.LastEndpoint);
+                log("Still looking: starting the connection afresh...\n" + LookingStep.Split('\n')[1]);
+                p = Phone.FindOnWifi(_cfg.PhoneSerial, 15000, Phone.LastFoundEndpoint ?? _cfg.LastEndpoint, () => _cancelled);
             }
             StopIfCancelled();
             var seen = Phone.LastFoundEndpoint ?? (p != null && System.Text.RegularExpressions.Regex.IsMatch(p.Serial, @"^\d+\.\d+\.\d+\.\d+:\d+$") ? p.Serial : null);
@@ -593,7 +599,7 @@ namespace Phonestick
             {
                 _checking = false;
                 if (t.Status == TaskStatus.RanToCompletion && t.Result && _mount.IsMounted
-                    && Run("Disconnecting", log => DisconnectAll()))
+                    && Run("Disconnecting", log => DisconnectAll(), quiet: true))
                     Balloon("Phone disconnected", "Unused for " + IdleLabel(_cfg.IdleMinutes) + ". Open it again from the tray.");
             }, TaskScheduler.FromCurrentSynchronizationContext());
         }
@@ -607,7 +613,7 @@ namespace Phonestick
         }
 
         /// <summary>Runs an action off the UI thread, showing errors as messages. False when busy (nothing started).</summary>
-        internal bool Run(string what, Action<Action<string>> action, Action after = null)
+        internal bool Run(string what, Action<Action<string>> action, Action after = null, bool quiet = false)
         {
             if (_busy) return false;
             _cancelled = false;
@@ -615,10 +621,19 @@ namespace Phonestick
             _busy = true;
             RefreshMenu();
             _tray.Text = Trim63(AppInfo.Name + ": " + what + "...");
+            if (!quiet) ShowProgressSoon(what);
             Task.Run(() =>
             {
                 string error = null;
-                try { action(msg => _ui.Post(_ => { _tray.Text = Trim63(AppInfo.Name + ": " + msg); }, null)); }
+                try
+                {
+                    action(msg => _ui.Post(_ =>
+                    {
+                        _tray.Text = Trim63(AppInfo.Name + ": " + msg.Split('\n')[0]);
+                        _step = msg;
+                        _card?.SetStep(msg);
+                    }, null));
+                }
                 catch (OperationCanceledException) { }
                 catch (AggregateException ae) { error = ae.InnerException?.Message ?? ae.Message; }
                 catch (UserError ue) { error = ue.Message; }
@@ -629,6 +644,7 @@ namespace Phonestick
                 _ui.Post(_ =>
                 {
                     _busy = false;
+                    EndProgress();
                     // A cancelled connect may have restarted the adb server after Cancel stopped it.
                     if (cancelled) Task.Run(() => Phone.StopServerIfUnused());
                     try
@@ -640,6 +656,50 @@ namespace Phonestick
                 }, null);
             });
             return true;
+        }
+
+        private ProgressCard _card;
+        private System.Windows.Forms.Timer _cardDelay;
+        /// <summary>The latest step of the running work, for a card that opens after it was set.</summary>
+        private string _step;
+
+        /// <summary>
+        /// Shows the progress card if the work is still running a moment later (quick work, like
+        /// most disconnects, never flashes one).
+        /// </summary>
+        private void ShowProgressSoon(string what)
+        {
+            EndProgress();
+            var name = string.IsNullOrEmpty(_cfg.PhoneModel) ? "your phone" : _cfg.PhoneModel;
+            string title = what.StartsWith("Connecting") ? "Connecting to " + name
+                : what.StartsWith("Updat") ? "Updating " + AppInfo.Name
+                : what;
+            _step = what.StartsWith("Connecting") ? "Starting..." : what.StartsWith("Disconnect") ? "Closing the connection..." : "Starting...";
+            bool cancellable = Connecting;
+            _cardDelay = new System.Windows.Forms.Timer { Interval = 600 };
+            _cardDelay.Tick += (o, e) =>
+            {
+                EndDelay();
+                if (!_busy || _card != null) return;
+                _card = new ProgressCard(title, _step, cancellable ? (Action)Disconnect : null);
+                _card.ShowCard();
+            };
+            _cardDelay.Start();
+        }
+
+        private void EndDelay()
+        {
+            if (_cardDelay == null) return;
+            _cardDelay.Stop();
+            _cardDelay.Dispose();
+            _cardDelay = null;
+        }
+
+        private void EndProgress()
+        {
+            EndDelay();
+            _card?.Finish();
+            _card = null;
         }
 
         internal void ConfigChanged() => _ui.Post(_ => RefreshMenu(), null);

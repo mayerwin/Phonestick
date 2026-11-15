@@ -230,6 +230,7 @@ namespace Phonestick
             if (UsedDrives().Contains(drive)) throw new UserError("Drive " + drive + " is already in use. Pick another letter in Settings.");
 
             var sw = Stopwatch.StartNew();
+            log("Getting the phone ready...");
             var card = EnsurePhoneServer(p, log);
             Log.Write("file server ready on the phone in " + sw.ElapsedMilliseconds + " ms" + (card != null ? ", SD card " + card : ""));
             log("Mounting " + drive + "...");

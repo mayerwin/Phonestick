@@ -144,10 +144,10 @@ Phonestick adds no new server and no new protocol. It uses Android's own Wireles
 
 - The tile arms or disarms access. While armed, the app turns Wireless debugging back on whenever Android turns it off, if the phone is on an approved network.
 - It learns approved networks by itself: switch the tile on at home and that network is remembered. Without location permission (Android hides Wi-Fi names from apps without it) it recognises a network by its gateway and subnet.
-- The first time a new access point is used, Android itself asks "Allow wireless debugging on this network?". Tick "Always allow" once per access point.
+- The first time a new access point is used, Android itself asks "Allow wireless debugging on this network?". Tick "Always allow" once per access point: Android trusts each one separately, so a repeater, or each band of a router, asks once more. If the prompt is declined or ignored, the app does not bring it back until the phone moves to another access point or reconnects, or the tile is switched off and on.
 - It reacts to events only, never to a timer. While the tile is on, a small foreground service listens for changes of the Wireless debugging setting, of the Wi-Fi connection (including moving to another access point of the same network, which sends nothing to a sleeping app) and the screen coming on, and turns Wireless debugging back on within a second or two. It never asks for the notification permission, so on Android 13 and later it shows no notification, only an entry in the "active apps" list of Quick Settings. Underneath, a network callback (Wi-Fi connected) and JobScheduler content triggers (a debugging switch changed) still work without it, and they restart it if Android ever stops it.
 - A short event log on the app's screen shows what it did and why.
-- The app only writes the debugging switches and never relies on reading them: since Android 17, apps are told developer options are off whatever their real state.
+- Since Android 17 the usual settings read tells apps that developer options are off whatever their real state. The app reads the real value through the settings provider's direct call instead, so it writes only when Wireless debugging is really off. Should a later Android close that too, it falls back to writing "on" at each event, spaced out.
 
 **On the computer**
 

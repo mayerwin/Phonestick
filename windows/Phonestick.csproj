@@ -15,7 +15,7 @@
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\phonestick.ico</ApplicationIcon>
-    <Version>0.3.8</Version>
+    <Version>0.3.9</Version>
     <!-- A single file: no Phonestick.exe.config (.NET Framework 4.8 runs the exe without it). -->
     <GenerateSupportedRuntime>false</GenerateSupportedRuntime>
   </PropertyGroup>

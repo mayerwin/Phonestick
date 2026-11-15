@@ -22,18 +22,21 @@ import android.service.quicksettings.TileService;
  *  - Wi-Fi connected: a PendingIntent network callback wakes NetReceiver, which
  *    queues a short job (Android needs a moment to learn the access point).
  *  - Wireless debugging switched off within a connection (roaming to another
- *    access point): up to Android 16 a content-trigger job on the setting wakes us.
- *    Android 17 hides that setting from apps, so while access is on ListenService
- *    listens to every Wi-Fi change (and the screen coming on) and writes "on" again.
+ *    access point, even one on the same channel): the change of the setting wakes
+ *    ListenService (or a content-trigger job), which reads the real value and writes
+ *    "on" again. ListenService also looks on every Wi-Fi change and screen on.
  *  - USB debugging switched on while locked down: a content-trigger job turns it off.
  *
- * The app only ever WRITES the debugging switches, it never relies on reading them:
- * since Android 17 apps are shown 0 for developer settings (development, USB and
- * wireless debugging) whatever their real value. Writing a value that is already
- * set changes nothing. A short quiet period after each write stops the app from
- * reacting to the change it just caused; a change seen during that period is
- * re-checked once when it ends. Later switch-offs are caught by the next event (a
- * Wi-Fi change, the screen coming on, Quick Settings opened).
+ * Reading: since Android 17 the usual settings read shows apps 0 for developer
+ * settings whatever their real value, but the settings provider's direct call still
+ * gives the real one (see Adb.readable). Then nothing is written while Wireless
+ * debugging is on, and a write Android undoes at once is known for what it is: its
+ * "Allow wireless debugging on this network?" prompt for an access point it does not
+ * trust yet. The app then waits for the answer instead of bringing the prompt back.
+ * Where the value cannot be read, the app writes blind: writing a value that is
+ * already set changes nothing, a short quiet period after each write stops it from
+ * reacting to the change it just caused, and a change seen during that period is
+ * re-checked once when it ends.
  *
  * Jobs are deferred by Doze unless the app is exempt from battery optimisation.
  * Setup exempts it (the app does no work while idle, so this costs nothing).
@@ -49,10 +52,10 @@ final class Access {
     private static final int JOB_SAFETY_OLD = 5;
     /**
      * Quiet re-writes of "on" (no change when already on): the first at most one per this gap
-     * within a connection, then twice as far apart each time, up to NUDGE_MAX_MS. On Android 17
-     * the app cannot tell whether Android refused a write (and showed its "Allow wireless
-     * debugging on this network?" prompt), so the back-off is what keeps a refused network
-     * from prompting every few seconds. A new connection, switching on, opening Quick
+     * within a connection, then twice as far apart each time, up to NUDGE_MAX_MS. Where the
+     * real value cannot be read, the app cannot tell whether Android refused a write (and
+     * showed its "Allow wireless debugging on this network?" prompt), so the back-off is what
+     * keeps a refused network from prompting every few seconds. A new connection, switching on, opening Quick
      * Settings, and a long enough pause since the last write (twice the gap) start again
      * from this gap: only re-writes in quick succession are spaced out.
      */
@@ -69,6 +72,16 @@ final class Access {
     private static final long ATTEMPT_WINDOW_MS = 3 * 60_000;
     /** How long to stay quiet after giving up. */
     private static final long GIVE_UP_MS = 30 * 60_000;
+
+    /**
+     * Probably another access point (or band) of the same network: a refusal on the last one
+     * says nothing about this one. Only where the real value can be read, so a refusal is
+     * known for what it is; otherwise the retry cap stands.
+     */
+    static void newAccessPoint(Context c) {
+        Prefs p = new Prefs(c);
+        if (p.attemptCount() > MAX_ATTEMPTS && Adb.readable(c)) p.attempt(0, 0, 0);
+    }
 
     private static boolean gaveUp(Prefs p, long handle, long now) {
         long age = now - p.attemptAt();
@@ -205,7 +218,7 @@ final class Access {
         long since = now - p.lastWriteAt();
         if (since >= 0 && since < gap) return;
         if (gaveUp(p, h, now)) return; // Android refuses here
-        if (Adb.readable() && Adb.get(c, Adb.WIFI) == 1) return; // already on
+        if (Adb.readable(c) && Adb.get(c, Adb.WIFI) == 1) return; // already on
         p.lastWrite(now, true);
         p.nudge(h, Math.min(NUDGE_MAX_MS, gap * 2));
         if (!Adb.put(c, Adb.WIFI, 1)) p.log(why + ": wireless debugging on FAILED");
@@ -261,14 +274,29 @@ final class Access {
 
         long h = n.getNetworkHandle();
         long now = System.currentTimeMillis(); // wall clock: survives reboots
-        if (Adb.readable() && Adb.get(c, Adb.WIFI) == 1) {
-            // Already on (up to Android 16 apps can read it): nothing to write, so no echo.
+        boolean readable = Adb.readable(c);
+        if (readable && Adb.get(c, Adb.WIFI) == 1) {
+            // Already on: nothing to write, so no echo. After a refusal this is the user
+            // accepting Android's prompt after all: later switch-offs are answered again.
+            if (gaveUp(p, h, now)) p.attempt(0, 0, 0);
             if (!fromSettingChange && !recheck) p.log(why + ": wireless debugging already on");
             return;
         }
         long since = now - p.lastWriteAt();
         long quiet = ListenService.running ? QUIET_LISTENING_MS : QUIET_MS;
-        if (!Adb.readable() && fromSettingChange && since >= 0 && since < quiet) {
+        if (readable && fromSettingChange && since >= 0 && since < quiet) {
+            // Our write was undone at once: Android does not trust this access point yet and
+            // shows "Allow wireless debugging on this network?" (or the user declined it).
+            // Writing again would only bring the prompt back. Wait for the answer (accepting
+            // turns it on by itself), another access point, a new connection, or the tile
+            // switched off and on.
+            if (!gaveUp(p, h, now)) {
+                p.attempt(h, now, MAX_ATTEMPTS + 1);
+                p.log("Android asks whether to allow Wireless debugging on this access point: waiting for the answer");
+            }
+            return;
+        }
+        if (!readable && fromSettingChange && since >= 0 && since < quiet) {
             // Probably the echo of our own write. Look again once the quiet period is over,
             // in case Android switched it off again meanwhile (once per write).
             if (!p.lastWriteFinal()) recheckLater(c, quiet - since + 1_000);

@@ -500,7 +500,8 @@ namespace Phonestick
                         "If this computer was removed from the phone's paired devices, set it up again: click the tray icon, the gear, then Set up a phone.");
                 throw new UserError(answers
                     ? "Your phone is on this network, but it is not accepting connections.\n\n" +
-                      "Pull down Quick Settings and check the " + AppInfo.Name + " tile is on. If it already is, tap it off and on."
+                      "Pull down Quick Settings and check the " + AppInfo.Name + " tile is on. If it already is, tap it off and on. " +
+                      "If Android then asks \"Allow wireless debugging on this network?\", tick Always allow and tap Allow."
                     : "Your phone was not found on this network.\n\n" +
                       "Check that the phone is on the same Wi-Fi as this computer and that the " + AppInfo.Name + " tile is on.");
             }

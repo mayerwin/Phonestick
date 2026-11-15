@@ -216,6 +216,7 @@ public class ListenService extends Service {
         h.postDelayed(() -> {
             roamPending = false;
             try {
+                Access.newAccessPoint(this);
                 Access.ensureWifi(this, null, false, "access point changed");
             } catch (RuntimeException e) {
                 new Prefs(this).log("listener: " + e);

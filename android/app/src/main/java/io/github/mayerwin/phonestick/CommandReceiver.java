@@ -33,6 +33,7 @@ public class CommandReceiver extends BroadcastReceiver {
                 + " usbAllowed=" + (p.allowUsb() ? 1 : 0)
                 + " permission=" + (Adb.canWrite(c) ? 1 : 0)
                 + " dozeExempt=" + (Access.dozeExempt(c) ? 1 : 0)
-                + " tile=" + (p.tileAdded() ? 1 : 0));
+                + " tile=" + (p.tileAdded() ? 1 : 0)
+                + " wifiDebugging=" + (Adb.readable(c) ? String.valueOf(Adb.get(c, Adb.WIFI)) : "unknown"));
     }
 }

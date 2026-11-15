@@ -15,10 +15,12 @@
     <!-- The listener that runs while access is on (ListenService). CHANGE_NETWORK_STATE is
          what Android requires for the "connected device" kind of service; the app does not
          change any network setting. No notification permission is asked, so on Android 13
-         and later the listener shows no notification. -->
+         and later the listener shows no notification (on 11 and 12, a silent minimised one). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <!-- A few seconds awake at most, while a re-check waits after a write (see Access). -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
         android:label="@string/app_name"

@@ -58,10 +58,13 @@ namespace Phonestick
         private bool Cancellable => _s.Busy && _s.BusyText == "Connecting...";
         /// <summary>When the panel last closed: a click on the tray icon that closed it must not reopen it.</summary>
         public static int LastClosedTick = Environment.TickCount - 100000;
-        /// <summary>Keeps the panel open when it loses focus (Phonestick.exe --panel-stay, for screenshots).</summary>
+        /// <summary>Keeps the panel open when it loses focus (Phonestick.exe --stay, for screenshots).</summary>
         public static bool StayOpen;
 
         private const float W = 360, Pad = 16;
+        /// <summary>Made once: a new StringFormat per paint was never freed.</summary>
+        private static readonly StringFormat BandFormat = new StringFormat(StringFormat.GenericTypographic)
+        { Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap };
         private const string ChevronLeft = "M15 18l-6-6 6-6";
         private const string ChevronRight = "M9 18l6-6-6-6";
         private static readonly int[] IdleChoices = { 15, 30, 60, 120, 0 };
@@ -343,7 +346,7 @@ namespace Phonestick
                 : _s.SetUp ? "Not connected" : "Pair once, then it just works";
             string detail = ok ? (_s.IdleMinutes <= 0 ? "stays open" : "closes after " + Short(_s.IdleMinutes) + " idle")
                 : busy ? "" : _s.SetUp ? "opens in seconds" : "";
-            var sf = new StringFormat(StringFormat.GenericTypographic) { Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap };
+            var sf = BandFormat;
             using (var fh = Theme.Px(13, FontStyle.Bold))
             using (var fd = Theme.Px(12.5f))
             using (var bh = new SolidBrush(tone))

@@ -14,8 +14,8 @@ namespace Phonestick
             {
                 lock (Gate)
                 {
-                    Directory.CreateDirectory(Config.LocalDir);
-                    var path = Path.Combine(Config.LocalDir, "phonestick.log");
+                    Directory.CreateDirectory(Config.Dir);
+                    var path = Path.Combine(Config.Dir, "phonestick.log");
                     if (File.Exists(path) && new FileInfo(path).Length > 1_000_000) File.Delete(path);
                     File.AppendAllText(path, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " " + msg + Environment.NewLine);
                 }

@@ -137,6 +137,10 @@ namespace Phonestick
         public static void ApplyAdbEnv(ProcessStartInfo psi)
         {
             psi.EnvironmentVariables["ANDROID_ADB_SERVER_PORT"] = AppInfo.AdbPort.ToString();
+            // Phonestick connects to its phone itself. Without this, an adb server that is up
+            // (started ahead of a connect, or during setup) links to every paired phone it hears
+            // of, and the phone shows "Wireless debugging connected" for nothing.
+            psi.EnvironmentVariables["ADB_MDNS_AUTO_CONNECT"] = "0";
             var adb = Adb;
             if (adb != null) psi.EnvironmentVariables["ADB"] = adb; // scrcpy uses this adb
         }
@@ -202,8 +206,24 @@ namespace Phonestick
             try { if (!p.HasExited) p.Kill(); } catch { }
         }
 
-        /// <summary>Quotes one command-line argument for Windows programs.</summary>
-        public static string Q(string s) =>
-            s.IndexOfAny(new[] { ' ', '\t', '"' }) < 0 && s.Length > 0 ? s : "\"" + s.Replace("\"", "\\\"") + "\"";
+        /// <summary>
+        /// Quotes one command-line argument for Windows programs (the usual argv rules: backslashes
+        /// are doubled where they come before a quote or the closing quote).
+        /// </summary>
+        public static string Q(string s)
+        {
+            if (s.Length > 0 && s.IndexOfAny(new[] { ' ', '\t', '"' }) < 0) return s;
+            var sb = new StringBuilder("\"");
+            int slashes = 0;
+            foreach (char ch in s)
+            {
+                if (ch == '\\') { slashes++; continue; }
+                sb.Append('\\', ch == '"' ? slashes * 2 + 1 : slashes);
+                sb.Append(ch);
+                slashes = 0;
+            }
+            sb.Append('\\', slashes * 2);
+            return sb.Append('"').ToString();
+        }
     }
 }

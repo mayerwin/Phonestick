@@ -15,10 +15,16 @@ namespace Phonestick
         [STAThread]
         private static int Main(string[] args)
         {
-            // Internal: the "ssh" command rclone runs to reach the phone's file server.
+            // Internal: the "ssh" command rclone runs to reach the phone's file server. Kept apart
+            // from everything else, so these short-lived processes never load Windows Forms.
             if (args.Length >= 2 && args[0] == "--pipe")
-                return AdbPipe.Run(args[1], "sh " + (args.Length >= 3 && args[2] == "sd" ? Mount.SdServerScript : Mount.ServerScript));
+                return AdbPipe.Run(args[1], "sh " + (args.Length >= 3 && args[2] == "sd" ? AppInfo.SdServerScript : AppInfo.ServerScript));
+            return App(args);
+        }
 
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static int App(string[] args)
+        {
             // Internal: writes a QR code PNG, to check the encoder ("--qr-preview TEXT FILE").
             if (args.Length >= 3 && args[0] == "--qr-preview")
             {
@@ -58,7 +64,9 @@ namespace Phonestick
             // Internal: started by the updater. Wait for the previous process to exit (it holds the
             // tray mutex). The update folder that holds the previous exe is emptied below.
             int au = Array.IndexOf(args, "--after-update");
-            if (au >= 0 && au + 1 < args.Length && int.TryParse(args[au + 1], out var oldPid))
+            int oldPid = 0;
+            bool afterUpdate = au >= 0 && au + 1 < args.Length && int.TryParse(args[au + 1], out oldPid);
+            if (afterUpdate)
             {
                 try { using (var old = System.Diagnostics.Process.GetProcessById(oldPid)) old.WaitForExit(20000); } catch { }
             }
@@ -67,6 +75,12 @@ namespace Phonestick
             using (var openSignal = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\" + AppInfo.Name + "-open"))
             using (var mutex = new Mutex(true, "Local\\" + AppInfo.Name + "-tray", out bool first))
             {
+                if (!first && afterUpdate)
+                {
+                    // The previous version is still finishing: wait for its tray to go, rather
+                    // than leave no Phonestick running at all.
+                    try { first = mutex.WaitOne(30000); } catch (AbandonedMutexException) { first = true; }
+                }
                 if (!first)
                 {
                     // Already running in the tray: ask it to open the phone.

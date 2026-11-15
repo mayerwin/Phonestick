@@ -36,11 +36,13 @@ namespace Phonestick
 
                     var up = new Thread(() =>
                     {
-                        var buf = new byte[65536];
+                        // Header and data in one buffer, sent with one write: one TCP segment
+                        // per packet instead of two (NoDelay sends each write at once).
+                        var buf = new byte[5 + 65536];
                         try
                         {
                             int n;
-                            while ((n = stdin.Read(buf, 0, buf.Length)) > 0)
+                            while ((n = stdin.Read(buf, 5, buf.Length - 5)) > 0)
                                 lock (sendLock) WritePacket(net, IdStdin, buf, n);
                             lock (sendLock) WritePacket(net, IdCloseStdin, buf, 0);
                         }
@@ -97,13 +99,12 @@ namespace Phonestick
             throw new IOException("adb: " + st + " " + reason);
         }
 
+        /// <summary>Sends one shell v2 packet: <paramref name="n"/> bytes of data at buf[5..], after the header room.</summary>
         private static void WritePacket(NetworkStream s, byte id, byte[] buf, int n)
         {
-            var h = new byte[5];
-            h[0] = id;
-            BitConverter.GetBytes(n).CopyTo(h, 1);
-            s.Write(h, 0, 5);
-            if (n > 0) s.Write(buf, 0, n);
+            buf[0] = id;
+            buf[1] = (byte)n; buf[2] = (byte)(n >> 8); buf[3] = (byte)(n >> 16); buf[4] = (byte)(n >> 24);
+            s.Write(buf, 0, 5 + n);
         }
 
         private static bool ReadExact(Stream s, byte[] buf, int n)

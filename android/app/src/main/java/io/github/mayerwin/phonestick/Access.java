@@ -8,6 +8,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.net.ConnectivityManager;
 import android.net.Network;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.PowerManager;
 import android.provider.Settings;
 import android.service.quicksettings.TileService;
@@ -30,7 +32,8 @@ import android.service.quicksettings.TileService;
  * wireless debugging) whatever their real value. Writing a value that is already
  * set changes nothing. A short quiet period after each write stops the app from
  * reacting to the change it just caused; a change seen during that period is
- * re-checked when it ends instead of being dropped.
+ * re-checked once when it ends. Later switch-offs are caught by the next event (a
+ * Wi-Fi change, the screen coming on, Quick Settings opened).
  *
  * Jobs are deferred by Doze unless the app is exempt from battery optimisation.
  * Setup exempts it (the app does no work while idle, so this costs nothing).
@@ -39,19 +42,29 @@ final class Access {
     static final int JOB_WIFI_WATCH = 1;
     static final int JOB_ENSURE = 2;
     static final int JOB_USB_WATCH = 4;
+    /** The look again after a quiet period, when the listener is not running. */
+    static final int JOB_RECHECK = 6;
     /** Removed jobs, cancelled on restore: 3 = old probe, 5 = 15-minute safety check. */
     private static final int JOB_PROBE_OLD = 3;
     private static final int JOB_SAFETY_OLD = 5;
-    /** Quiet re-writes of "on" (no change when already on): at most one per this gap. */
+    /**
+     * Quiet re-writes of "on" (no change when already on): the first at most one per this gap
+     * within a connection, then twice as far apart each time, up to NUDGE_MAX_MS. On Android 17
+     * the app cannot tell whether Android refused a write (and showed its "Allow wireless
+     * debugging on this network?" prompt), so the back-off is what keeps a refused network
+     * from prompting every few seconds. A new connection, switching on, opening Quick
+     * Settings, and a long enough pause since the last write (twice the gap) start again
+     * from this gap: only re-writes in quick succession are spaced out.
+     */
     static final long NUDGE_GAP_MS = 30_000;
+    private static final long NUDGE_MAX_MS = 15 * 60_000;
 
     /** Ignore setting changes this soon after our own write (ours, or Android refusing it). */
     private static final long QUIET_MS = 10_000;
     /** The same with the listener running: it hears changes at once, Android's echo of
      *  our write comes within about a second. */
     private static final long QUIET_LISTENING_MS = 5_000;
-    /** Safety cap: at most this many writes per network connection per window. */
-    /** Each switch-off costs about two (the write, then the look again after the quiet period). */
+    /** Safety cap: at most this many answers to a switch-off per network connection per window. */
     private static final int MAX_ATTEMPTS = 6;
     private static final long ATTEMPT_WINDOW_MS = 3 * 60_000;
     /** How long to stay quiet after giving up. */
@@ -77,6 +90,7 @@ final class Access {
         p.armed(true);
         p.lockdownActive(true);
         p.attempt(0, 0, 0);
+        p.nudge(0, 0);
         p.lastWriteAt(0);
         Network n = Net.currentWifi(c);
         p.log("switched on" + (n == null ? " (no Wi-Fi now)" : " on " + Net.label(c, n)));
@@ -88,8 +102,10 @@ final class Access {
                 p.log("network approved");
             }
         }
-        enforceUsb(c);
-        registerNetCallback(c);
+        enforceUsb(c, true);
+        // Registering makes Android report the current network at once (a second check 3 s
+        // later), so only when this process has not registered yet.
+        if (!netHooked) registerNetCallback(c);
         scheduleWifiWatch(c);
         ListenService.start(c);
         if (n != null) ensureWifi(c, n, false, "switch on");
@@ -105,7 +121,13 @@ final class Access {
         JobScheduler js = c.getSystemService(JobScheduler.class);
         js.cancel(JOB_WIFI_WATCH);
         js.cancel(JOB_ENSURE);
+        js.cancel(JOB_RECHECK);
+        cancelRecheck();
+        // Set before the write and cleared after it: restore() finishes a switch-off cut short
+        // by a crash, and otherwise leaves Wireless debugging alone (setup, Android Studio).
+        p.pendingOff(true);
         boolean ok = Adb.put(c, Adb.WIFI, 0);
+        if (ok) p.pendingOff(false);
         p.log("switched off" + (ok ? "" : ": could not switch Wireless debugging off (permission missing), switch it off in Developer options"));
         refreshTile(c);
     }
@@ -119,11 +141,13 @@ final class Access {
         if (p.armed()) {
             rehook(c);
             scheduleEnsure(c, SETTLE_MS);
-        } else if (Adb.canWrite(c)) {
-            // Off means off, also after a crash between "switched off" and the write.
-            Adb.put(c, Adb.WIFI, 0);
+        } else if (p.pendingOff() && Adb.canWrite(c)) {
+            // Off means off, also after a crash between "switched off" and the write. Only
+            // then: a setup from the PC, or someone using Wireless debugging by hand while
+            // access is off, must not be cut off each time the app opens or is updated.
+            if (Adb.put(c, Adb.WIFI, 0)) p.pendingOff(false);
         }
-        if (p.lockdownActive()) enforceUsb(c);
+        if (p.lockdownActive()) enforceUsb(c, true);
     }
 
     /** True once this process registered the network callback (a force-stop removes it). */
@@ -145,27 +169,45 @@ final class Access {
         Prefs p = new Prefs(c);
         if (!p.armed() || !Adb.canWrite(c)) return;
         rehook(c);
-        if (p.lockdownActive()) enforceUsb(c);
-        nudge(c, "tile shown");
+        if (p.lockdownActive()) enforceUsb(c, true);
+        nudge(c, "tile shown", true);
+    }
+
+    /** The gap the next quiet re-write must wait for after the last write (see NUDGE_GAP_MS). */
+    static long nudgeGap(Context c) {
+        Prefs p = new Prefs(c);
+        Network n = Net.currentWifi(c);
+        return n != null ? currentGap(p, n.getNetworkHandle(), System.currentTimeMillis()) : NUDGE_GAP_MS;
+    }
+
+    private static long currentGap(Prefs p, long handle, long now) {
+        if (p.nudgeHandle() != handle) return NUDGE_GAP_MS;
+        long gap = Math.max(NUDGE_GAP_MS, p.nudgeGap());
+        long since = now - p.lastWriteAt();
+        return since < 0 || since > 2 * gap ? NUDGE_GAP_MS : gap; // decays after a quiet spell
     }
 
     /**
      * Writes "Wireless debugging on" again on an approved network (since Android 17 apps are
      * not told when Android switches it off). Writing a value that is already set changes
-     * nothing, so this is free when all is well. Quiet, at most once per NUDGE_GAP_MS, not
+     * nothing, so this is free when all is well. Quiet, spaced out (see NUDGE_GAP_MS), not
      * counted as a retry, and skipped where Android keeps refusing.
+     * @param fresh the user is looking (Quick Settings opened): start the back-off again
      */
-    static void nudge(Context c, String why) {
+    static void nudge(Context c, String why, boolean fresh) {
         Prefs p = new Prefs(c);
         if (!p.armed() || !Adb.canWrite(c)) return;
-        long now = System.currentTimeMillis();
-        long since = now - p.lastWriteAt();
-        if (since >= 0 && since < NUDGE_GAP_MS) return;
         Network n = Net.currentWifi(c);
         if (n == null || !p.isApproved(Net.fingerprints(c, n))) return;
-        if (gaveUp(p, n.getNetworkHandle(), now)) return; // Android refuses here
+        long h = n.getNetworkHandle();
+        long now = System.currentTimeMillis();
+        long gap = fresh ? NUDGE_GAP_MS : currentGap(p, h, now);
+        long since = now - p.lastWriteAt();
+        if (since >= 0 && since < gap) return;
+        if (gaveUp(p, h, now)) return; // Android refuses here
         if (Adb.readable() && Adb.get(c, Adb.WIFI) == 1) return; // already on
         p.lastWrite(now, true);
+        p.nudge(h, Math.min(NUDGE_MAX_MS, gap * 2));
         if (!Adb.put(c, Adb.WIFI, 1)) p.log(why + ": wireless debugging on FAILED");
     }
 
@@ -174,7 +216,7 @@ final class Access {
         p.allowUsb(allow);
         p.log(allow ? "USB debugging allowed" : "USB debugging locked off");
         if (allow) c.getSystemService(JobScheduler.class).cancel(JOB_USB_WATCH);
-        else enforceUsb(c);
+        else enforceUsb(c, true);
     }
 
     /** True when Doze cannot hold back our wake-ups. */
@@ -205,9 +247,11 @@ final class Access {
         if (!Adb.canWrite(c)) { p.log(why + ": skipped, permission missing"); return; }
         if (n == null) n = Net.currentWifi(c);
         if (n == null) { p.log(why + ": skipped, no Wi-Fi"); return; }
-        if (Net.fingerprint(c, n) == null && !recheck) {
-            // Mid-reconnect: the address is not known yet. Look again in a moment.
-            recheckLater(c, 3_000);
+        if (Net.fingerprint(c, n) == null) {
+            // Mid-reconnect: the address is not known yet. Look again in a moment, once (the
+            // listener also hears the address arrive).
+            if (!recheck) recheckLater(c, 3_000);
+            else p.log(why + ": skipped, no IPv4 address on this Wi-Fi yet");
             return;
         }
         if (!p.isApproved(Net.fingerprints(c, n))) {
@@ -219,7 +263,6 @@ final class Access {
         long now = System.currentTimeMillis(); // wall clock: survives reboots
         if (Adb.readable() && Adb.get(c, Adb.WIFI) == 1) {
             // Already on (up to Android 16 apps can read it): nothing to write, so no echo.
-            p.lastCheckAt(now);
             if (!fromSettingChange && !recheck) p.log(why + ": wireless debugging already on");
             return;
         }
@@ -250,37 +293,56 @@ final class Access {
         }
         p.lastWrite(now, recheck);
         boolean ok = Adb.put(c, Adb.WIFI, 1);
-        p.lastCheckAt(now);
         p.log(why + ": wireless debugging on" + (ok ? "" : " FAILED"));
     }
 
+    /** One handler for the in-process re-check, so a newer one really replaces an older one. */
+    private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static Runnable pendingRecheck;
+    private static PowerManager.WakeLock recheckLock;
 
     /**
      * The look again after a quiet period: in the running listener when there is one (Android
-     * can hold jobs back for many seconds), else as a job.
+     * can hold jobs back for many seconds), else as a job. In the listener, a short wake lock
+     * keeps the phone from sleeping through the wait (a delay on the main thread does not run
+     * while the phone sleeps); it is released as soon as the re-check ran.
      */
     private static void recheckLater(Context c, long delayMs) {
         if (ListenService.running) {
             Context app = c.getApplicationContext();
-            android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
             synchronized (Access.class) {
-                if (pendingRecheck != null) main.removeCallbacks(pendingRecheck); // one at a time
-                pendingRecheck = () -> {
-                    synchronized (Access.class) { pendingRecheck = null; }
-                    try {
-                        ensureWifi(app, null, false, "re-check", true);
-                    } catch (RuntimeException e) {
-                        new Prefs(app).log("re-check failed: " + e);
+                if (pendingRecheck != null) MAIN.removeCallbacks(pendingRecheck); // one at a time
+                if (recheckLock == null) {
+                    recheckLock = app.getSystemService(PowerManager.class)
+                            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "phonestick:recheck");
+                    recheckLock.setReferenceCounted(false);
+                }
+                recheckLock.acquire(delayMs + 5_000); // released below, or by this timeout at worst
+                Runnable r = new Runnable() {
+                    @Override
+                    public void run() {
+                        synchronized (Access.class) {
+                            if (pendingRecheck == this) pendingRecheck = null;
+                        }
+                        try {
+                            ensureWifi(app, null, false, "re-check", true);
+                        } catch (RuntimeException e) {
+                            new Prefs(app).log("re-check failed: " + e);
+                        } finally {
+                            synchronized (Access.class) {
+                                if (pendingRecheck == null && recheckLock.isHeld()) recheckLock.release();
+                            }
+                        }
                     }
                 };
-                main.postDelayed(pendingRecheck, delayMs);
+                pendingRecheck = r;
+                MAIN.postDelayed(r, delayMs);
             }
             return;
         }
         android.os.PersistableBundle x = new android.os.PersistableBundle();
         x.putBoolean("recheck", true);
-        JobInfo ji = new JobInfo.Builder(JOB_ENSURE, job(c))
+        JobInfo ji = new JobInfo.Builder(JOB_RECHECK, job(c))
                 .setMinimumLatency(delayMs)
                 .setRequiredNetwork(Net.wifiRequest())
                 .setExtras(x)
@@ -288,11 +350,24 @@ final class Access {
         c.getSystemService(JobScheduler.class).schedule(ji);
     }
 
-    static void enforceUsb(Context c) {
+    /** Drops a pending in-process re-check (access switched off). */
+    private static void cancelRecheck() {
+        synchronized (Access.class) {
+            if (pendingRecheck != null) MAIN.removeCallbacks(pendingRecheck);
+            pendingRecheck = null;
+            if (recheckLock != null && recheckLock.isHeld()) recheckLock.release();
+        }
+    }
+
+    /**
+     * @param schedule false from the USB watch job itself, which queues its next run once it
+     *     has ended (scheduling a running job's id would stop it)
+     */
+    static void enforceUsb(Context c, boolean schedule) {
         Prefs p = new Prefs(c);
         if (!p.lockdownActive() || p.allowUsb()) return;
         if (Adb.canWrite(c)) Adb.put(c, Adb.USB, 0); // no-op when already off
-        scheduleUsbWatch(c);
+        if (schedule) scheduleUsbWatch(c);
     }
 
     // ---------------------------------------------------------------- scheduling

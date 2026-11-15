@@ -14,20 +14,33 @@ namespace Phonestick
         public static readonly Color Indigo = Color.FromArgb(0x6D, 0x28, 0xD9);
         public static readonly Color Cyan = Color.FromArgb(0x08, 0x91, 0xB2);
 
+        private static int _dark = -1; // -1: not read yet
+
+        /// <summary>Dark mode for apps. Read once and kept (every colour below asks for it, many
+        /// times per paint); <see cref="Refresh"/> reads it again when Windows settings change.</summary>
         public static bool Dark
         {
             get
             {
-                var forced = Environment.GetEnvironmentVariable("PHONESTICK_THEME"); // "light" or "dark", for screenshots
-                if (forced == "light") return false;
-                if (forced == "dark") return true;
-                try
-                {
-                    using (var k = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"))
-                        return k?.GetValue("AppsUseLightTheme") is int v && v == 0;
-                }
-                catch { return false; }
+                int d = _dark;
+                if (d < 0) _dark = d = ReadDark() ? 1 : 0;
+                return d == 1;
             }
+        }
+
+        public static void Refresh() => _dark = -1;
+
+        private static bool ReadDark()
+        {
+            var forced = Environment.GetEnvironmentVariable("PHONESTICK_THEME"); // "light" or "dark", for screenshots
+            if (forced == "light") return false;
+            if (forced == "dark") return true;
+            try
+            {
+                using (var k = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"))
+                    return k?.GetValue("AppsUseLightTheme") is int v && v == 0;
+            }
+            catch { return false; }
         }
 
         // Tokens: calm porcelain canvas, white cards on soft shadows, one confident accent.
@@ -35,7 +48,6 @@ namespace Phonestick
         public static Color Card => Dark ? C(0x1A1B1F) : Color.White;          // cards, menus
         public static Color Tonal => Dark ? C(0x26272D) : C(0xEEF0F3);         // secondary buttons
         public static Color TonalHover => Dark ? C(0x303139) : C(0xE4E7EB);
-        public static Color CardHover => TonalHover;
         public static Color Text => Dark ? C(0xEDEEF0) : C(0x16181D);          // ink
         public static Color Text2 => Dark ? C(0xB4B8C0) : C(0x454A54);         // labels
         public static Color Muted => Dark ? C(0x8D929C) : C(0x646A75);         // captions
@@ -114,31 +126,6 @@ namespace Phonestick
             }
             return new Font(FontFamily.GenericSansSerif, size, style);
         }
-
-        public static Font DisplayFont(float size, FontStyle style = FontStyle.Bold)
-        {
-            foreach (var name in new[] { "Segoe UI Variable Display", "Segoe UI Semibold", "Segoe UI" })
-            {
-                try
-                {
-                    var f = new Font(name, size, style);
-                    if (f.Name == name) return f;
-                    f.Dispose();
-                }
-                catch { }
-            }
-            return UiFont(size, style);
-        }
-
-        public static LinearGradientBrush BrandBrush(Rectangle r) =>
-            new LinearGradientBrush(r, Violet, Cyan, 35f)
-            {
-                InterpolationColors = new ColorBlend
-                {
-                    Colors = new[] { Violet, Indigo, Cyan },
-                    Positions = new[] { 0f, 0.5f, 1f },
-                },
-            };
 
         public static GraphicsPath Rounded(RectangleF r, float radius)
         {
@@ -227,7 +214,7 @@ namespace Phonestick
             g.SmoothingMode = SmoothingMode.AntiAlias;
             var r = new RectangleF(4, 1, e.Item.Width - 8, e.Item.Height - 2);
             using (var p = Theme.Rounded(r, 5))
-            using (var b = new SolidBrush(Theme.CardHover))
+            using (var b = new SolidBrush(Theme.TonalHover))
                 g.FillPath(b, p);
         }
 
@@ -241,22 +228,6 @@ namespace Phonestick
         {
             e.ArrowColor = Theme.Muted;
             base.OnRenderArrow(e);
-        }
-
-        protected override void OnRenderItemCheck(ToolStripItemImageRenderEventArgs e)
-        {
-            var g = e.Graphics;
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            var r = e.ImageRectangle;
-            using (var pen = new Pen(Theme.Accent, 2f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
-            {
-                g.DrawLines(pen, new[]
-                {
-                    new PointF(r.Left + r.Width * 0.18f, r.Top + r.Height * 0.52f),
-                    new PointF(r.Left + r.Width * 0.42f, r.Top + r.Height * 0.76f),
-                    new PointF(r.Left + r.Width * 0.84f, r.Top + r.Height * 0.26f),
-                });
-            }
         }
 
         protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e)
@@ -274,7 +245,7 @@ namespace Phonestick
             public override Color ImageMarginGradientEnd => Theme.Back;
             public override Color MenuBorder => Theme.Border;
             public override Color MenuItemBorder => Color.Transparent;
-            public override Color MenuItemSelected => Theme.CardHover;
+            public override Color MenuItemSelected => Theme.TonalHover;
             public override Color SeparatorDark => Theme.Border;
             public override Color SeparatorLight => Theme.Border;
         }

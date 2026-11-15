@@ -51,7 +51,7 @@ It also gives your computer a proper link to the phone: mirror its screen with o
     </td>
     <td width="33%" valign="top">
       <h3>🔋 Near-zero battery cost</h3>
-      The phone app is 95 KB and has no internet or location permission. While the tile is on, a tiny listener sleeps until Wi-Fi or the debugging switch changes: no polling, no timers. With the tile off nothing runs.
+      The phone app is 98 KB and has no internet or location permission. While the tile is on, a tiny listener sleeps until Wi-Fi or the debugging switch changes: no polling, no timers. With the tile off nothing runs.
     </td>
   </tr>
   <tr>
@@ -167,7 +167,7 @@ Phonestick adds no new server and no new protocol. It uses Android's own Wireles
 
 **Does it need root?** No. The phone app gets one permission, granted once from your computer over adb.
 
-**Does it use battery or data?** No mobile data: everything stays on your Wi-Fi. While the tile is on, the phone app keeps a tiny listener that sleeps until Wi-Fi or the debugging switch changes: no polling, no wake locks. With the tile off it does nothing at all.
+**Does it use battery or data?** No mobile data: everything stays on your Wi-Fi. While the tile is on, the phone app keeps a tiny listener that sleeps until Wi-Fi or the debugging switch changes: no polling, and at most a few seconds awake after it switches debugging back on. With the tile off it does nothing at all.
 
 **How fast is it?** Around 10 MB/s on a typical home Wi-Fi, so a 300 MB video copies in about half a minute.
 
@@ -192,7 +192,7 @@ Phonestick adds no new server and no new protocol. It uses Android's own Wireles
 
 | Part | What it is |
 |---|---|
-| [`android/`](android/) | The phone app: a Quick Settings tile and one screen. About 95 KB, plain Java, no libraries. |
+| [`android/`](android/) | The phone app: a Quick Settings tile and one screen. About 98 KB, plain Java, no libraries. |
 | [`windows/`](windows/) | The tray app. .NET Framework 4.8, built into Windows 10 and 11. The phone app is embedded in the exe. |
 | [`docs/`](docs/) | The website. |
 

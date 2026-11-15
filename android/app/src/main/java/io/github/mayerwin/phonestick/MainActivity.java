@@ -244,7 +244,8 @@ public class MainActivity extends Activity {
         title.setTypeface(brand);
         texts.addView(title);
         String sub = !granted ? getString(R.string.hero_needs_setup)
-                : on ? getString(R.string.hero_on_short) : getString(R.string.hero_off_sub);
+                : !on ? getString(R.string.hero_off_sub)
+                : approved ? getString(R.string.hero_on_short) : getString(R.string.hero_on_away);
         texts.addView(text(sub, 14, dim, false));
         c.addView(top);
 

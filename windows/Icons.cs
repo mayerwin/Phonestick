@@ -20,7 +20,7 @@ namespace Phonestick
         /// </summary>
         public static Icon Tray(TrayState state, int size = 0)
         {
-            if (size <= 0) size = SystemInformation.SmallIconSize.Width;
+            if (size <= 0) size = TraySize();
             using (var bmp = TrayBitmap(state, size, TaskbarIsDark()))
             {
                 var h = bmp.GetHicon();
@@ -29,6 +29,33 @@ namespace Phonestick
                 return icon;
             }
         }
+
+        /// <summary>
+        /// The small-icon size at the taskbar's own DPI. SystemInformation gives the DPI this
+        /// process started with, which goes stale after a scaling change (the icon then blurs).
+        /// </summary>
+        private static int TraySize()
+        {
+            try
+            {
+                var bar = FindWindow("Shell_TrayWnd", null);
+                uint dpi = bar == IntPtr.Zero ? 0 : GetDpiForWindow(bar);
+                if (dpi > 0)
+                {
+                    int s = GetSystemMetricsForDpi(49 /* SM_CXSMICON */, dpi);
+                    if (s > 0) return s;
+                }
+            }
+            catch { } // before Windows 10 1607: no per-DPI metrics
+            return SystemInformation.SmallIconSize.Width;
+        }
+
+        [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+        private static extern IntPtr FindWindow(string className, string windowName);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern uint GetDpiForWindow(IntPtr hwnd);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern int GetSystemMetricsForDpi(int index, uint dpi);
 
         public static bool TaskbarIsDark()
         {

@@ -193,7 +193,9 @@ namespace Phonestick
                 finally
                 {
                     EndWork();
-                    Phone.StopServerIfUnused();
+                    // After a setup, the tray app connects at once over the link this one opened:
+                    // stopping adb in between would make it start over.
+                    if (!done) Phone.StopServerIfUnused();
                     _watching = false;
                     OnUi(this, () =>
                     {
@@ -224,6 +226,10 @@ namespace Phonestick
             bool toldUnauthorized = false, toldCode = false, toldHint = false;
             string failedCode = null;
             var since = DateTime.UtcNow;
+            // Each connected phone is described once (two adb round trips saved per round), and
+            // the ones there before any pairing are told apart from the one just paired.
+            var described = new Dictionary<string, Phone>();
+            var before = new HashSet<string>();
             while (!_closed)
             {
                 if (DateTime.UtcNow - since > TimeSpan.FromMinutes(10))
@@ -242,10 +248,19 @@ namespace Phonestick
                         toldUnauthorized = true;
                     }
                     if (d.state != "device" || d.serial.StartsWith("emulator-")) continue;
-                    var p = Phone.Describe(d.serial);
-                    if (p == null) continue;
-                    if (d.usb || pairedHosts.Count > 0 || _confirmed) return (p, d.usb); // explicit action: go on
-                    if (offered != p.SerialNo)
+                    if (!described.TryGetValue(d.serial, out var p))
+                    {
+                        p = Phone.Describe(d.serial);
+                        if (p == null) continue;
+                        described[d.serial] = p;
+                        if (pairedHosts.Count == 0) before.Add(d.serial);
+                    }
+                    // Explicit actions go on: a cable, the phone paired here, or the click on the
+                    // button that offered this very phone.
+                    bool justPaired = pairedHosts.Contains(d.serial.Split(':')[0])
+                                      || (pairedHosts.Count > 0 && !before.Contains(d.serial));
+                    if (d.usb || justPaired || (_confirmed && p.SerialNo == offered)) return (p, d.usb);
+                    if (offered == null)
                     {
                         offered = p.SerialNo;
                         Log("Found " + p.Model + ", already paired with this PC. Click the button below to set it up, " +
@@ -255,8 +270,13 @@ namespace Phonestick
                     }
                 }
 
-                // Pairing: asked of the phones directly (see Mdns), then adb's own discovery.
-                var pairing = Mdns.Find(Mdns.Pairing).Select(x => (x.Instance, x.Endpoint)).ToList();
+                // Asked of the phones directly (see Mdns), both kinds in one query, then adb's own discovery.
+                // Phones that answered before (a phone already set up, say) must not stop the
+                // sweep that finds the new one: only a pairing offer ends it early.
+                var direct = Mdns.Find(new[] { Mdns.Pairing, Mdns.Connect }, null, x => x.Type == Mdns.Pairing);
+
+                // Pairing.
+                var pairing = direct.Where(x => x.Type == Mdns.Pairing).Select(x => (x.Instance, x.Endpoint)).ToList();
                 pairing.AddRange(Phone.MdnsServices("_adb-tls-pairing").Where(x => !pairing.Any(y => y.Endpoint == x.endpoint)));
                 foreach (var (name, endpoint) in pairing)
                 {
@@ -290,7 +310,7 @@ namespace Phonestick
                 }
 
                 // Paired phones: connect to them (only paired ones can be reached).
-                var connect = Mdns.Find(Mdns.Connect).Select(x => x.Endpoint).ToList();
+                var connect = direct.Where(x => x.Type == Mdns.Connect).Select(x => x.Endpoint).ToList();
                 connect.AddRange(Phone.MdnsServices().Select(x => x.endpoint).Where(e => !connect.Contains(e)));
                 foreach (var endpoint in connect)
                 {
@@ -330,6 +350,11 @@ namespace Phonestick
                 // so find it the way the tray app will: the phone's mDNS announcement.
                 Phone wifi = null;
                 bool asked = false;
+                // Its Wi-Fi address, readable over USB: asked directly, no sweep of the network.
+                var m = System.Text.RegularExpressions.Regex.Match(
+                    p.Shell("ip -f inet addr show wlan0", 10000).Out, @"inet (\d+\.\d+\.\d+\.\d+)/");
+                System.Net.IPAddress wlan = m.Success ? System.Net.IPAddress.Parse(m.Groups[1].Value) : null;
+                bool Mine(Mdns.Service x) => Phone.NameMatches(x.Instance, p.SerialNo);
                 for (int i = 0; i < 45 && wifi == null; i++)
                 {
                     Thread.Sleep(2000);
@@ -340,9 +365,11 @@ namespace Phonestick
                         asked = true;
                         continue;
                     }
-                    foreach (var (name, endpoint) in Phone.MdnsServices())
+                    var endpoints = Mdns.Find(Mdns.Connect, wlan, Mine).Select(x => (x.Instance, x.Endpoint)).ToList();
+                    endpoints.AddRange(Phone.MdnsServices().Where(x => !endpoints.Any(y => y.Endpoint == x.endpoint)));
+                    foreach (var (name, endpoint) in endpoints)
                     {
-                        if (!name.Contains(p.SerialNo)) continue;
+                        if (!Phone.NameMatches(name, p.SerialNo)) continue;
                         Log("Connecting over Wi-Fi to " + endpoint + "...");
                         Phone.Adb("connect " + endpoint, 20000);
                         var candidate = new Phone { Serial = endpoint };
@@ -350,10 +377,15 @@ namespace Phonestick
                     }
                 }
                 if (wifi == null)
-                    throw new UserError("This computer could not reach the phone over Wi-Fi. Check that both are on the same network " +
-                        "and that Windows lets adb.exe through the firewall. Or pair over Wi-Fi with the QR code above and try again.");
+                    throw new UserError("This computer could not reach the phone over Wi-Fi. Check that both are on the same Wi-Fi " +
+                        "network (some guest networks keep devices apart). Or pair over Wi-Fi with the QR code above and try again.");
                 Log("Wi-Fi link works.");
+                _cfg.LastEndpoint = wifi.Serial;
             }
+            else if (System.Text.RegularExpressions.Regex.IsMatch(p.Serial, @"^\d+\.\d+\.\d+\.\d+:\d+$"))
+                _cfg.LastEndpoint = p.Serial; // asked first at the next connect
+            else if (p.SerialNo != _cfg.PhoneSerial)
+                _cfg.LastEndpoint = ""; // another phone's address would only be asked in vain
 
             _cfg.PhoneSerial = p.SerialNo;
             _cfg.PhoneModel = p.Model;
@@ -365,8 +397,9 @@ namespace Phonestick
             if (!tile.Ok) Log("  (could not add it: " + tile.All + ". The app will offer to add it.)");
 
             Log("Switching the phone app on (USB debugging is locked off now)...");
-            p.Shell("am broadcast -a " + pkg + ".ARM -n " + pkg + "/.CommandReceiver", 15000);
+            // The app first: switching on locks USB debugging off, which ends a USB link.
             p.Shell("am start -n " + pkg + "/.MainActivity", 15000);
+            p.Shell("am broadcast -a " + pkg + ".ARM -n " + pkg + "/.CommandReceiver", 15000);
 
             Log("\r\nDone." + (overUsb ? " You can unplug the phone." : ""));
             Log("Opening your phone's files now. Next time: click the tray icon, or Open phone files.");
@@ -423,7 +456,7 @@ namespace Phonestick
                         Phone.StartServer();
                         var r = Phone.Adb("pair " + Tools.Q(endpoint) + " " + pin, 30000);
                         msg = r.Out.Contains("Successfully paired")
-                            ? "Paired. Now click the tray icon, then Set up your phone."
+                            ? "Paired. Now click the tray icon, the gear, then Set up a phone."
                             : "Pairing failed: " + r.All;
                     }
                     catch (Exception ex) { msg = ex.Message; }
@@ -435,6 +468,10 @@ namespace Phonestick
             Theme.Style(this);
             Theme.Primary(ok);
             ok.Height = cancel.Height = 32;
+            // Laid out in 96-dpi pixels above: scaled to this screen, as the fonts already are.
+            float k;
+            using (var g = CreateGraphics()) k = g.DpiX / 96f;
+            if (Math.Abs(k - 1f) > 0.01f) Scale(new SizeF(k, k));
             HandleCreated += (s, e) => Theme.ApplyChrome(this);
             AcceptButton = ok;
             CancelButton = cancel;

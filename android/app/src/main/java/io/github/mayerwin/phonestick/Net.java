@@ -37,22 +37,28 @@ final class Net {
         ConnectivityManager cm = c.getSystemService(ConnectivityManager.class);
         // Prefer the network Android routes through: during a switch, or with a second
         // (local-only) Wi-Fi such as a camera's setup hotspot, the list can hold several.
+        // A VPN over Wi-Fi also reports the Wi-Fi transport: never take it for the Wi-Fi itself
+        // (its addresses would be fingerprinted instead of the router's).
         Network active = cm.getActiveNetwork();
-        if (active != null) {
-            NetworkCapabilities ac = cm.getNetworkCapabilities(active);
-            if (ac != null && ac.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return active;
-        }
+        if (active != null && isWifi(cm.getNetworkCapabilities(active))) return active;
         for (Network n : cm.getAllNetworks()) {
-            NetworkCapabilities nc = cm.getNetworkCapabilities(n);
-            if (nc != null && nc.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return n;
+            if (isWifi(cm.getNetworkCapabilities(n))) return n;
         }
         return null;
     }
 
+    private static boolean isWifi(NetworkCapabilities nc) {
+        return nc != null && nc.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+                && nc.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN);
+    }
+
     private static List<String> parts(Context c, Network n) {
+        if (n == null) return new ArrayList<>();
+        return parts(c.getSystemService(ConnectivityManager.class).getLinkProperties(n));
+    }
+
+    private static List<String> parts(LinkProperties lp) {
         List<String> out = new ArrayList<>();
-        if (n == null) return out;
-        LinkProperties lp = c.getSystemService(ConnectivityManager.class).getLinkProperties(n);
         if (lp == null) return out;
         for (RouteInfo r : lp.getRoutes()) {
             InetAddress gw = r.getGateway();
@@ -88,8 +94,17 @@ final class Net {
      * (mesh nodes, IPv6 DNS, Private DNS), which used to make a known network look new.
      */
     static String fingerprint(Context c, Network n) {
+        return fingerprint(parts(c, n));
+    }
+
+    /** The same, from link properties already in hand (a network callback's). */
+    static String fingerprint(LinkProperties lp) {
+        return fingerprint(parts(lp));
+    }
+
+    private static String fingerprint(List<String> parts) {
         List<String> p = new ArrayList<>();
-        for (String s : parts(c, n)) if (s.startsWith("gw ") || s.startsWith("net ")) p.add(s);
+        for (String s : parts) if (s.startsWith("gw ") || s.startsWith("net ")) p.add(s);
         return hash(p);
     }
 

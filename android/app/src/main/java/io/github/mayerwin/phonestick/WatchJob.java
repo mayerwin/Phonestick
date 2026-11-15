@@ -18,11 +18,13 @@ public class WatchJob extends JobService {
                     Access.ensureWifi(this, params.getNetwork(), true, "setting changed");
                     break;
                 case Access.JOB_ENSURE:
-                    boolean recheck = params.getExtras().getBoolean("recheck", false);
+                case Access.JOB_RECHECK:
+                    // (Versions up to 0.3.7 queued the re-check as JOB_ENSURE with this extra.)
+                    boolean recheck = id == Access.JOB_RECHECK || params.getExtras().getBoolean("recheck", false);
                     Access.ensureWifi(this, params.getNetwork(), false, recheck ? "re-check" : "check", recheck);
                     break;
                 case Access.JOB_USB_WATCH:
-                    Access.enforceUsb(this);
+                    Access.enforceUsb(this, false);
                     break;
             }
         } catch (RuntimeException e) {

@@ -36,15 +36,27 @@ final class Prefs {
         sp.edit().putLong("attemptHandle", handle).putLong("attemptAt", at).putInt("attemptCount", count).apply();
     }
 
-    /** When the app last switched wireless debugging on (any reason). */
-    long lastCheckAt() { return sp.getLong("lastCheckAt", 0); }
-    void lastCheckAt(long v) { sp.edit().putLong("lastCheckAt", v).apply(); }
+    // apply(), not commit(): one process reads its own writes at once, and Android saves them
+    // to disk before a receiver, job or service it woke counts as finished.
 
     long lastWriteAt() { return sp.getLong("lastWriteAt", 0); }
-    void lastWriteAt(long v) { sp.edit().putLong("lastWriteAt", v).commit(); }
+    void lastWriteAt(long v) { sp.edit().putLong("lastWriteAt", v).apply(); }
     /** True when the last write needs no look again (a re-check or a nudge). */
     boolean lastWriteFinal() { return sp.getBoolean("lastWriteFinal", false); }
-    void lastWrite(long at, boolean fin) { sp.edit().putLong("lastWriteAt", at).putBoolean("lastWriteFinal", fin).commit(); }
+    void lastWrite(long at, boolean fin) { sp.edit().putLong("lastWriteAt", at).putBoolean("lastWriteFinal", fin).apply(); }
+
+    /** Quiet re-writes: the network they apply to, and the gap before the next one. */
+    long nudgeHandle() { return sp.getLong("nudgeHandle", 0); }
+    long nudgeGap() { return sp.getLong("nudgeGap", 0); }
+    void nudge(long handle, long gap) { sp.edit().putLong("nudgeHandle", handle).putLong("nudgeGap", gap).apply(); }
+
+    /** A switch-off whose write has not gone through yet (see Access.disarm). */
+    boolean pendingOff() { return sp.getBoolean("pendingOff", false); }
+    /** Set with commit(): it must be on disk before the write it guards, in case the app dies. */
+    void pendingOff(boolean v) {
+        if (v) sp.edit().putBoolean("pendingOff", true).commit();
+        else sp.edit().putBoolean("pendingOff", false).apply();
+    }
 
 
     /** Whether our tile is in Quick Settings (from the tile's added/removed callbacks). */
@@ -70,7 +82,7 @@ final class Prefs {
         StringBuilder sb = new StringBuilder();
         for (int i = Math.max(0, lines.length - (LOG_MAX - 1)); i < lines.length; i++) sb.append(lines[i]).append('\n');
         sb.append(line);
-        sp.edit().putString("log", sb.toString()).commit();
+        sp.edit().putString("log", sb.toString()).apply();
     }
 
     String log() { return sp.getString("log", ""); }

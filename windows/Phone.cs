@@ -29,6 +29,42 @@ namespace Phonestick
 
         public static void StartServer() { lock (Gate) Adb("start-server", 30000); }
 
+        /// <summary>Whether our adb server is up (something listens on its local port).</summary>
+        private static bool ServerRunning()
+        {
+            try
+            {
+                return System.Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties()
+                    .GetActiveTcpListeners().Any(e => e.Port == AppInfo.AdbPort);
+            }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// Starts the adb server ahead of a likely connect (the panel or the menu was opened): it
+        /// takes about two seconds, which the user then does not wait for. Stopped again a little
+        /// later if nothing used it.
+        /// </summary>
+        public static void Prewarm()
+        {
+            _prewarmedAt = DateTime.UtcNow; // a later panel open pushes the stop back
+            if (Interlocked.Exchange(ref _prewarming, 1) == 1) return;
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                try
+                {
+                    if (!ServerRunning()) StartServer();
+                    while (DateTime.UtcNow - _prewarmedAt < TimeSpan.FromSeconds(30)) Thread.Sleep(1000);
+                    StopServerIfUnused();
+                }
+                catch { }
+                finally { Volatile.Write(ref _prewarming, 0); }
+            });
+        }
+
+        private static int _prewarming;
+        private static DateTime _prewarmedAt;
+
         /// <summary>Stops our private adb server: every connection to the phone closes.</summary>
         public static void StopServer()
         {
@@ -68,16 +104,15 @@ namespace Phonestick
 
         public static Phone Describe(string serial)
         {
+            // One round trip for both values: each adb command over Wi-Fi costs a little.
             var p = new Phone { Serial = serial };
-            p.SerialNo = p.Shell("getprop ro.serialno", 15000).Out.Trim();
-            p.Model = p.Shell("getprop ro.product.model", 15000).Out.Trim();
+            var lines = p.Shell("echo s=$(getprop ro.serialno); echo m=$(getprop ro.product.model)", 15000)
+                .Out.Split('\n').Select(l => l.Trim()).ToList();
+            p.SerialNo = lines.Where(l => l.StartsWith("s=")).Select(l => l.Substring(2)).FirstOrDefault() ?? "";
+            p.Model = lines.Where(l => l.StartsWith("m=")).Select(l => l.Substring(2)).FirstOrDefault() ?? "";
             return string.IsNullOrEmpty(p.SerialNo) ? null : p;
         }
 
-        /// <summary>
-        /// Finds the configured phone on the Wi-Fi network: already connected, or announced
-        /// over mDNS as _adb-tls-connect. Only the phone whose ro.serialno matches is used.
-        /// </summary>
         /// <summary>What the last FindOnWifi saw, to tell the user what is wrong when it fails.</summary>
         public static bool LastFindSawService;
         /// <summary>The phone's ip:port as last found by a direct mDNS query, to remember for next time.</summary>
@@ -86,25 +121,36 @@ namespace Phonestick
         public static bool NameMatches(string instance, string serialNo) =>
             serialNo == "" || instance.Contains("-" + serialNo + "-") || instance == "adb-" + serialNo;
 
+        /// <summary>
+        /// Finds the configured phone on the Wi-Fi network: already connected, or announced
+        /// over mDNS as _adb-tls-connect. Only the phone whose ro.serialno matches is used.
+        /// </summary>
         public static Phone FindOnWifi(string wantedSerialNo, int waitMs = 15000, string lastEndpoint = null)
         {
-            StartServer();
             LastFindSawService = false;
             LastFoundEndpoint = null;
+            System.Net.IPAddress lastIp = null;
+            if (!string.IsNullOrEmpty(lastEndpoint)) System.Net.IPAddress.TryParse(lastEndpoint.Split(':')[0], out lastIp);
+            bool Wanted(Mdns.Service x) => NameMatches(x.Instance, wantedSerialNo);
+            // A fresh adb server takes about two seconds to start: the phone is asked meanwhile.
+            var firstIp = lastIp;
+            var early = ServerRunning() ? null : System.Threading.Tasks.Task.Run(() => Mdns.Find(Mdns.Connect, firstIp, Wanted));
+            StartServer();
             var deadline = DateTime.UtcNow.AddMilliseconds(waitMs);
             var lastTry = new Dictionary<string, DateTime>();
             var offlineSince = new Dictionary<string, DateTime>();
-            System.Net.IPAddress lastIp = null;
-            if (!string.IsNullOrEmpty(lastEndpoint)) System.Net.IPAddress.TryParse(lastEndpoint.Split(':')[0], out lastIp);
 
+            // True when adb says it is connected: then the phone is looked for again at once.
             bool TryConnect(string endpoint)
             {
                 if (lastTry.TryGetValue(endpoint, out var t) && DateTime.UtcNow - t < TimeSpan.FromSeconds(4)) return false;
                 lastTry[endpoint] = DateTime.UtcNow;
                 var r = Adb("connect " + endpoint, 10000);
                 Log.Write("adb connect " + endpoint + ": " + r.All.Trim());
-                return true;
+                return r.Out.Contains("connected to");
             }
+            // Another phone or an emulator on the same adb server is described once, not every round.
+            var others = new HashSet<string>();
 
             while (true)
             {
@@ -122,22 +168,28 @@ namespace Phonestick
                         }
                         continue;
                     }
-                    if (d.state != "device") continue;
+                    if (d.state != "device" || others.Contains(d.serial)) continue;
                     if (wantedSerialNo == "" && d.serial.StartsWith("emulator-")) continue;
                     var p = Describe(d.serial);
                     if (p != null && (wantedSerialNo == "" || p.SerialNo == wantedSerialNo)) return p;
+                    if (p != null) others.Add(d.serial);
                 }
                 // Ask the phone itself where wireless debugging listens (fast and reliable, see
                 // Mdns), then adb's own discovery as a second source.
-                foreach (var s in Mdns.Find(Mdns.Connect, lastIp).Where(s => NameMatches(s.Instance, wantedSerialNo)))
+                bool direct = false, connected = false;
+                var services = early != null ? early.Result : Mdns.Find(Mdns.Connect, lastIp, Wanted);
+                early = null;
+                foreach (var s in services.Where(Wanted))
                 {
-                    LastFindSawService = true;
+                    LastFindSawService = direct = true;
                     LastFoundEndpoint = s.Endpoint;
                     lastIp = s.Address;
-                    TryConnect(s.Endpoint);
+                    connected |= TryConnect(s.Endpoint);
                 }
-                foreach (var (name, endpoint) in MdnsServices())
-                    if (NameMatches(name, wantedSerialNo)) { LastFindSawService = true; TryConnect(endpoint); }
+                if (!direct)
+                    foreach (var (name, endpoint) in MdnsServices())
+                        if (NameMatches(name, wantedSerialNo)) { LastFindSawService = true; connected |= TryConnect(endpoint); }
+                if (connected) continue; // look at the devices again right away (also past the deadline)
                 if (DateTime.UtcNow > deadline) return null;
                 Thread.Sleep(300);
             }
@@ -155,17 +207,6 @@ namespace Phonestick
                 if (ep != null) list.Add((parts[0], ep));
             }
             return list;
-        }
-
-        public static Phone FindUsb()
-        {
-            StartServer();
-            var d = Devices().FirstOrDefault(x => x.usb);
-            if (d.serial == null) return null;
-            if (d.state == "unauthorized")
-                throw new UserError("The phone is asking whether to allow USB debugging. Tick \"Always allow from this computer\" and tap Allow, then try again.");
-            if (d.state != "device") return null;
-            return Describe(d.serial);
         }
 
         /// <summary>

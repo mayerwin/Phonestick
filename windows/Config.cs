@@ -14,7 +14,6 @@ namespace Phonestick
     {
         private static string _dir;
         public static string Dir => _dir ?? (_dir = ResolveDir());
-        public static string LocalDir => Dir;
         private static string FilePath => Path.Combine(Dir, "settings.ini");
 
         /// <summary>The sibling folder, or %LOCALAPPDATA%\Phonestick when the exe sits somewhere read-only.</summary>
@@ -67,31 +66,87 @@ namespace Phonestick
         /// <summary>UTC time of the last completed update check; MinValue = never.</summary>
         public DateTime LastUpdateCheck { get; set; } = DateTime.MinValue;
 
+        /// <summary>
+        /// True when settings.ini exists but could not be read (held by a sync tool or antivirus
+        /// at login, say): the defaults in use then are never saved over the real settings.
+        /// </summary>
+        private bool _unread;
+
         public static Config Load()
         {
-            var c = new Config();
-            try
+            var lines = ReadFile(10, out bool missing);
+            if (missing) return new Config();
+            if (lines == null)
             {
-                if (!File.Exists(FilePath)) return c;
-                // Last value wins: a key twice (hand edit, sync conflict) must not reset everything.
-                var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                foreach (var l in File.ReadAllLines(FilePath))
-                {
-                    var p = l.Split(new[] { '=' }, 2);
-                    if (p.Length == 2) d[p[0].Trim()] = p[1].Trim();
-                }
-                if (d.TryGetValue("PhoneSerial", out var s)) c.PhoneSerial = s;
-                if (d.TryGetValue("PhoneModel", out var m)) c.PhoneModel = m;
-                if (d.TryGetValue("LastEndpoint", out var le)) c.LastEndpoint = le;
-                if (d.TryGetValue("Drive", out var dr) && dr.Length >= 1) c.Drive = dr.Substring(0, 1).ToUpperInvariant() + ":";
-                if (d.TryGetValue("IdleMinutes", out var im) && int.TryParse(im, out var i) && i >= 0) c.IdleMinutes = i;
-                if (d.TryGetValue("FirstRunDone", out var f)) c.FirstRunDone = f == "1";
-                if (d.TryGetValue("CheckUpdates", out var cu)) c.CheckUpdates = cu != "0";
-                if (d.TryGetValue("LastUpdateCheck", out var lu) && long.TryParse(lu, out var ticks) && ticks > 0)
-                    c.LastUpdateCheck = new DateTime(ticks, DateTimeKind.Utc);
+                Log.Write("settings could not be read: using defaults, merged into the file at the next save");
+                return new Config { _unread = true, FirstRunDone = true };
             }
-            catch { /* defaults */ }
+            return Parse(lines);
+        }
+
+        /// <summary>The file's lines; null when it exists but stays unreadable (locked, no access).</summary>
+        private static string[] ReadFile(int attempts, out bool missing)
+        {
+            missing = false;
+            for (int attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    if (!File.Exists(FilePath)) { missing = true; return null; }
+                    return File.ReadAllLines(FilePath);
+                }
+                catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+                {
+                    if (attempt + 1 >= attempts) return null;
+                    System.Threading.Thread.Sleep(300);
+                }
+            }
+        }
+
+        /// <summary>Each value on its own: a bad one (hand edit, sync conflict) keeps its default, never the others.</summary>
+        private static Config Parse(string[] lines)
+        {
+            var c = new Config();
+            // Last value wins: a key twice must not reset everything.
+            var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var l in lines)
+            {
+                var p = l.Split(new[] { '=' }, 2);
+                if (p.Length == 2) d[p[0].Trim()] = p[1].Trim();
+            }
+            if (d.TryGetValue("PhoneSerial", out var s)) c.PhoneSerial = s;
+            if (d.TryGetValue("PhoneModel", out var m)) c.PhoneModel = m;
+            if (d.TryGetValue("LastEndpoint", out var le)) c.LastEndpoint = le;
+            if (d.TryGetValue("Drive", out var dr) && dr.Length >= 1 && char.ToUpperInvariant(dr[0]) >= 'D' && char.ToUpperInvariant(dr[0]) <= 'Z')
+                c.Drive = char.ToUpperInvariant(dr[0]) + ":";
+            if (d.TryGetValue("IdleMinutes", out var im) && int.TryParse(im, out var i) && i >= 0) c.IdleMinutes = i;
+            if (d.TryGetValue("FirstRunDone", out var f)) c.FirstRunDone = f == "1";
+            if (d.TryGetValue("CheckUpdates", out var cu)) c.CheckUpdates = cu != "0";
+            if (d.TryGetValue("LastUpdateCheck", out var lu) && long.TryParse(lu, out var ticks)
+                && ticks > 0 && ticks <= DateTime.MaxValue.Ticks)
+                c.LastUpdateCheck = new DateTime(ticks, DateTimeKind.Utc);
             return c;
+        }
+
+        /// <summary>
+        /// After a start with the file unreadable: the values from the file, where this session
+        /// left the default in place, so a setting changed now is kept and nothing else is lost.
+        /// </summary>
+        private void MergeFromFile()
+        {
+            var lines = ReadFile(3, out bool missing);
+            if (lines == null && !missing) return; // still unreadable: try again at the next save
+            _unread = false;
+            if (missing) return;
+            var file = Parse(lines);
+            var def = new Config();
+            if (PhoneSerial == def.PhoneSerial) { PhoneSerial = file.PhoneSerial; PhoneModel = file.PhoneModel; }
+            if (LastEndpoint == def.LastEndpoint) LastEndpoint = file.LastEndpoint;
+            if (Drive == def.Drive) Drive = file.Drive;
+            if (IdleMinutes == def.IdleMinutes) IdleMinutes = file.IdleMinutes;
+            if (CheckUpdates == def.CheckUpdates) CheckUpdates = file.CheckUpdates;
+            if (LastUpdateCheck < file.LastUpdateCheck) LastUpdateCheck = file.LastUpdateCheck;
+            Log.Write("settings file readable again: merged");
         }
 
         private static readonly object SaveLock = new object();
@@ -105,6 +160,8 @@ namespace Phonestick
         {
             lock (SaveLock)
             {
+                if (_unread) MergeFromFile();
+                if (_unread) { Log.Write("settings not saved: the file is still unreadable"); return; }
                 var lines = new List<string>
                 {
                     "PhoneSerial=" + PhoneSerial,

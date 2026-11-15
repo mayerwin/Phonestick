@@ -33,9 +33,10 @@ import android.provider.Settings;
  * Android 17 does not always tell apps when it switches Wireless debugging off, so on
  * the last two the listener writes "on" again, which costs nothing when it is already on.
  *
- * It sleeps between events: no polling, no wake lock. The app never asks for the
- * notification permission, so on Android 13 and later the required notification is
- * not shown; the app only appears in the "active apps" list of Quick Settings.
+ * It sleeps between events: no polling. The app never asks for the notification
+ * permission, so on Android 13 and later the required notification is not shown; the
+ * app only appears in the "active apps" list of Quick Settings. (On Android 11 and 12 it
+ * shows as a silent, minimised notification.)
  */
 public class ListenService extends Service {
     private static final String CHANNEL = "listen";
@@ -46,6 +47,8 @@ public class ListenService extends Service {
     static volatile boolean running;
 
     private Handler h;
+    /** This instance's listeners are registered (running can be cleared early by stop()). */
+    private boolean hooked;
     private ConnectivityManager.NetworkCallback cb;
     private BroadcastReceiver screen;
     private ContentObserver setting;
@@ -70,8 +73,17 @@ public class ListenService extends Service {
         }
     }
 
+    /**
+     * Stops the listener. Through onStartCommand, not stopService: a service just started with
+     * startForegroundService must still call startForeground, or Android ends the app.
+     */
     static void stop(Context c) {
-        c.stopService(new Intent(c, ListenService.class));
+        running = false;
+        try {
+            c.startService(new Intent(c, ListenService.class)); // sees access off, stops itself
+        } catch (RuntimeException e) {
+            c.stopService(new Intent(c, ListenService.class));
+        }
     }
 
     @Override
@@ -93,8 +105,9 @@ public class ListenService extends Service {
             stopSelf();
             return START_NOT_STICKY;
         }
-        if (!running) {
-            running = true;
+        running = true;
+        if (!hooked) {
+            hooked = true;
             hook();
             new Prefs(this).log("listener started");
         }
@@ -132,20 +145,32 @@ public class ListenService extends Service {
             @Override
             public void onCapabilitiesChanged(Network n, NetworkCapabilities nc) {
                 if (n.getNetworkHandle() != handle) return;
+                // Called on every change of signal strength too: only another frequency (another
+                // access point or band) means anything here. Android 11 does not give it.
                 int f = nc.getTransportInfo() instanceof WifiInfo
                         ? ((WifiInfo) nc.getTransportInfo()).getFrequency() : -1;
                 boolean moved = freq > 0 && f > 0 && f != freq;
                 if (f > 0) freq = f;
-                if (moved) roamSoon(); else nudgeSoon("Wi-Fi changed");
+                if (moved) roamSoon();
             }
 
             @Override
             public void onLinkPropertiesChanged(Network n, LinkProperties lp) {
                 if (n.getNetworkHandle() != handle) return;
-                String now = Net.fingerprint(ListenService.this, n);
+                String now = Net.fingerprint(lp);
                 if (now != null && fp != null && !now.equals(fp)) roamSoon();
                 else nudgeSoon("Wi-Fi changed");
                 if (now != null) fp = now;
+            }
+
+            @Override
+            public void onLost(Network n) {
+                if (n.getNetworkHandle() != handle) return;
+                // Follow the Wi-Fi that remains, if any (a second, local-only one was lost).
+                Network cur = Net.currentWifi(ListenService.this);
+                handle = cur == null ? 0 : cur.getNetworkHandle();
+                freq = -1;
+                fp = cur == null ? null : Net.fingerprint(ListenService.this, cur);
             }
         };
         try {
@@ -184,7 +209,7 @@ public class ListenService extends Service {
         registerReceiver(screen, f, Context.RECEIVER_NOT_EXPORTED);
     }
 
-    /** Probably another access point: a full, logged check (counted against the retry cap). */
+    /** Probably another access point: a full, logged check. */
     private void roamSoon() {
         if (roamPending) return;
         roamPending = true;
@@ -199,19 +224,20 @@ public class ListenService extends Service {
     }
 
     /**
-     * Any other change: write "on" again, quietly and at most once per Access.NUDGE_GAP_MS
-     * (a change inside that gap is handled when it ends, never dropped).
+     * Any other change: write "on" again, quietly and spaced out (see Access.NUDGE_GAP_MS; a
+     * change inside the gap is handled when it ends).
      */
     private void nudgeSoon(String why) {
         nudgeWhy = why;
         if (nudgePending) return;
         nudgePending = true;
+        long gap = Access.nudgeGap(this);
         long since = System.currentTimeMillis() - new Prefs(this).lastWriteAt();
-        long wait = (since >= 0 && since < Access.NUDGE_GAP_MS) ? Access.NUDGE_GAP_MS - since : 0;
+        long wait = (since >= 0 && since < gap) ? gap - since : 0;
         h.postDelayed(() -> {
             nudgePending = false;
             try {
-                Access.nudge(this, nudgeWhy);
+                Access.nudge(this, nudgeWhy, false);
             } catch (RuntimeException e) {
                 new Prefs(this).log("listener: " + e);
             }
@@ -221,6 +247,7 @@ public class ListenService extends Service {
     @Override
     public void onDestroy() {
         running = false;
+        hooked = false;
         h.removeCallbacksAndMessages(null);
         if (cb != null) {
             try {

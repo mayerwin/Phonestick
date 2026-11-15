@@ -255,8 +255,14 @@ namespace Phonestick
     }
 
     /// <summary>An error meant to be shown to the user as is.</summary>
-    internal sealed class UserError : Exception
+    internal class UserError : Exception
     {
         public UserError(string m) : base(m) { }
+    }
+
+    /// <summary>The connection dropped midway (the phone moved to another access point, say): worth one more try.</summary>
+    internal sealed class PhoneLostError : UserError
+    {
+        public PhoneLostError(string m) : base(m) { }
     }
 }

@@ -382,10 +382,26 @@ namespace Phonestick
                 var sw = Stopwatch.StartNew();
                 Helpers.Ensure(log);
                 StopIfCancelled();
-                var p = FindPhone();
-                long found = sw.ElapsedMilliseconds;
-                StopIfCancelled();
-                _mount.Start(p, _cfg, log, () => _cancelled);
+                Phone p;
+                long found;
+                for (int attempt = 0; ; attempt++)
+                {
+                    p = FindPhone();
+                    found = sw.ElapsedMilliseconds;
+                    StopIfCancelled();
+                    try
+                    {
+                        _mount.Start(p, _cfg, log, () => _cancelled);
+                        break;
+                    }
+                    catch (PhoneLostError) when (attempt == 0 && !_cancelled)
+                    {
+                        // Android cuts Wireless debugging when the phone moves to another access
+                        // point; the phone app turns it back on within a second or two.
+                        Log.Write("connection dropped while getting the phone ready: trying again");
+                        log("Connecting again...");
+                    }
+                }
                 long mounted = sw.ElapsedMilliseconds;
                 _ui.Post(_ =>
                 {

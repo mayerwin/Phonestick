@@ -68,22 +68,27 @@ namespace Phonestick
             // The version comes from a small file written next to rclone: running the rclone
             // binary on the phone just to ask costs a noticeable moment at every mount.
             // The scripts already there are read too: usually nothing needs writing (one round trip).
-            var facts = p.Shell(
-                "echo v=$(cat " + VersionFile + " 2>/dev/null); " +
-                "echo abi=$(getprop ro.product.cpu.abi); " +
-                "echo root=$(readlink -f /sdcard); " +
-                "for d in /storage/*; do echo card=$d; done; " +
-                "echo s1=$(cat " + AppInfo.ServerScript + " 2>/dev/null); " +
-                "echo s2=$(cat " + AppInfo.SdServerScript + " 2>/dev/null); " +
-                "[ -e " + AppInfo.PhoneDir + "/rclone.conf ] && echo conf=1", 20000).Out
-                .Split('\n').Select(l => l.Trim()).ToList();
+            const string lost = "The connection to the phone dropped while getting it ready (it may have moved to another Wi-Fi access point). Try again.";
+            List<string> facts = null;
+            // The abi line is always there when the phone answered: without it the connection
+            // dropped (Android cuts Wireless debugging when the phone moves to another access
+            // point), which must not read as an unsupported phone. Asked twice before giving up.
+            for (int attempt = 0; attempt < 2 && (facts == null || !facts.Any(l => l.StartsWith("abi="))); attempt++)
+                facts = p.Shell(
+                    "echo v=$(cat " + VersionFile + " 2>/dev/null); " +
+                    "echo abi=$(getprop ro.product.cpu.abi); " +
+                    "echo root=$(readlink -f /sdcard); " +
+                    "for d in /storage/*; do echo card=$d; done; " +
+                    "echo s1=$(cat " + AppInfo.ServerScript + " 2>/dev/null); " +
+                    "echo s2=$(cat " + AppInfo.SdServerScript + " 2>/dev/null); " +
+                    "[ -e " + AppInfo.PhoneDir + "/rclone.conf ] && echo conf=1", 20000).Out
+                    .Split('\n').Select(l => l.Trim()).ToList();
             string Fact(string key) => facts.Where(l => l.StartsWith(key + "=")).Select(l => l.Substring(key.Length + 1)).FirstOrDefault() ?? "";
+            if (Fact("abi") == "") throw new PhoneLostError(lost);
 
             bool pushed = false;
             // No file yet (installed by an older version): ask the binary itself, once.
-            if (Fact("v") != version && !Regex.IsMatch(
-                    p.Shell(AppInfo.PhoneDir + "/rclone version 2>/dev/null | head -1", 20000).Out,
-                    @"rclone " + Regex.Escape(version) + @"(\s|$)"))
+            if (Fact("v") != version && !RcloneOnPhoneIs(p, version, lost))
             {
                 var abi = Fact("abi");
                 string arch;
@@ -118,6 +123,17 @@ namespace Phonestick
                 if (!w.Ok) throw new UserError("Could not prepare the file server on the phone:\n" + w.All);
             }
             return card;
+        }
+
+        /// <summary>
+        /// Whether the rclone on the phone is this version. A dropped connection throws, so it
+        /// never causes a needless new copy of rclone.
+        /// </summary>
+        private static bool RcloneOnPhoneIs(Phone p, string version, string lost)
+        {
+            var o = p.Shell("echo answered; " + AppInfo.PhoneDir + "/rclone version 2>/dev/null | head -1", 20000).Out;
+            if (!o.Contains("answered")) throw new PhoneLostError(lost);
+            return Regex.IsMatch(o, @"rclone " + Regex.Escape(version) + @"(\s|$)");
         }
 
         /// <summary>The server script serving this folder (one line, single spaces: compared as read back).</summary>

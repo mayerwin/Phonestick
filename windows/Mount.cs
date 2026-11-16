@@ -494,6 +494,14 @@ namespace Phonestick
                         if (code != 0) { Log.Write("upload of " + it.Remote + " failed (rclone exit " + code + "), kept for the next mount"); continue; }
                         try { File.Delete(it.Data); File.Delete(it.Meta); } catch { }
                         Log.Write("uploaded " + it.Remote);
+                        // Sent by a separate rclone: the drive's kept listing of that folder must learn of it.
+                        try
+                        {
+                            var vol = it.Sd ? _sd : _main;
+                            var dir = it.Remote.Contains("/") ? it.Remote.Substring(0, it.Remote.LastIndexOf('/')) : "";
+                            if (vol != null && vol.Alive) Rc(vol, "vfs/refresh", "{\"dir\":" + JsonString(dir) + "}");
+                        }
+                        catch { }
                         // The interrupted upload left its temporary "NAME.XXXXXXXX.partial" on the phone.
                         var root = it.Sd ? _roots.sd : _roots.main;
                         if (root != null)

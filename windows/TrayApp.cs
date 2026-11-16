@@ -35,6 +35,9 @@ namespace Phonestick
         private readonly Config _cfg = Config.Load();
         private readonly Mount _mount = new Mount();
         private readonly System.Windows.Forms.Timer _idleTimer = new System.Windows.Forms.Timer { Interval = 60000 };
+        private readonly System.Threading.Timer _freshTimer;
+        private int _freshening;
+
         private volatile Process _scrcpy;
         private volatile bool _busy;
         private string _busyText = "Connecting...";
@@ -60,6 +63,15 @@ namespace Phonestick
             _mount.Ended += () => _ui.Post(_ => OnMountEnded(), null);
             _mount.SdChanged += () => _ui.Post(_ => RefreshMenu(), null);
             _idleTimer.Tick += (s, e) => CheckIdle();
+            // While mounted: the phone folders open in Explorer are listed again in the
+            // background now and then, so new photos show up without anyone waiting (Mount.KeepFresh).
+            _freshTimer = new System.Threading.Timer(_ =>
+            {
+                if (!_mount.IsMounted || Interlocked.Exchange(ref _freshening, 1) == 1) return;
+                try { _mount.KeepFresh(ExplorerFolders.Open()); }
+                catch { }
+                finally { Volatile.Write(ref _freshening, 0); }
+            }, null, 5000, 5000);
             _tray.BalloonTipClicked += (s, e) => { var a = _balloonClick; _balloonClick = null; a?.Invoke(); };
             _tray.BalloonTipClosed += (s, e) => _balloonClick = null;
             // Redraw the tray glyph when the taskbar theme or scaling changes (events, not polling).
@@ -343,7 +355,7 @@ namespace Phonestick
                 // Download and check first: if that fails, the drive and screen stay as they are.
                 Updater.Download(info, log);
                 // Never swap the exe under a mounted drive or a screen session.
-                _mount.FinishUploads(log, TimeSpan.FromMinutes(2));
+                _mount.FinishUploads(log, TimeSpan.FromHours(1));
                 DisconnectAll();
                 Updater.Swap(info, log);
                 done = true;
@@ -545,7 +557,7 @@ namespace Phonestick
             }
             Run("Disconnecting", log =>
             {
-                _mount.FinishUploads(log, TimeSpan.FromMinutes(2));
+                _mount.FinishUploads(log, TimeSpan.FromHours(1));
                 DisconnectAll();
             });
         }
@@ -747,7 +759,7 @@ namespace Phonestick
             // says so), so the app is never running unseen.
             if (Run("Disconnecting", log =>
                 {
-                    _mount.FinishUploads(log, TimeSpan.FromMinutes(2));
+                    _mount.FinishUploads(log, TimeSpan.FromHours(1));
                     DisconnectAll();
                 }, after: () => { _tray.Visible = false; ExitThread(); }))
                 return;
@@ -765,6 +777,7 @@ namespace Phonestick
             {
                 _tray.Dispose();
                 _idleTimer.Dispose();
+                _freshTimer.Dispose();
             }
             base.Dispose(disposing);
         }

@@ -187,6 +187,7 @@ Phonestick adds no new server and no new protocol. It uses Android's own Wireles
 ## 📋 Limits
 
 - Your router must let devices on the Wi-Fi see each other (no client isolation), and Windows must let `adb.exe` through the firewall for discovery.
+- Copies to the phone are written straight to it, with no cache on the PC: Explorer's progress is the real transfer, and a cut and paste removes the original only once the file is complete on the phone. While a copy runs, the phone shows it under a temporary `.partial` name. The flip side: an app can't open a file on the drive to edit it in place (it gets "access denied"). Copy the file to the PC, edit it there, and copy it back.
 - Developer options must stay on. Turning them off disables all debugging.
 - While access is on, switching Wireless debugging off in Settings does not stick: Phonestick turns it back on. Use the tile.
 - Phones with aggressive battery managers may delay the app's wake-ups or stop its listener. Setup exempts it from battery optimisation, which costs nothing since the listener sleeps between events. Settings › Apps › Force stop removes everything until the app or its tile is opened again (that is how Android defines force-stop).

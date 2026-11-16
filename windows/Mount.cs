@@ -122,8 +122,12 @@ namespace Phonestick
                 var w = p.Shell(write + " && echo " + version + " > " + VersionFile + " && touch " + AppInfo.PhoneDir + "/rclone.conf", 10000);
                 if (!w.Ok) throw new UserError("Could not prepare the file server on the phone:\n" + w.All);
             }
+            _roots = (root, card);
             return card;
         }
+
+        /// <summary>The folders the two file servers serve on the phone (internal storage, SD card or null).</summary>
+        private static (string main, string sd) _roots;
 
         /// <summary>
         /// Whether the rclone on the phone is this version. A dropped connection throws, so it
@@ -187,6 +191,19 @@ namespace Phonestick
                 File.Delete(zipPath);
             }
             return bin;
+        }
+
+        public sealed class UploadInfo { public int Files; public string Name; public long Done, Total; }
+
+        /// <summary>"photo.jpg, 1.2 of 2.0 GB" (and "+ 3 more" when several files wait).</summary>
+        public static string Describe(UploadInfo u)
+        {
+            if (u == null) return "almost done";
+            string Size(long b) => b >= 1L << 30 ? (b / (double)(1L << 30)).ToString("0.0") + " GB" : (b >> 20) + " MB";
+            var s = u.Name != null ? Path.GetFileName(u.Name) : (u.Files == 1 ? "1 file" : u.Files + " files");
+            if (u.Total > 0) s += ", " + Size(u.Done) + " of " + Size(u.Total);
+            if (u.Name != null && u.Files > 1) s += " + " + (u.Files - 1) + " more";
+            return s;
         }
 
         /// <summary>One rclone mount: the phone's internal storage, or its SD card.</summary>
@@ -289,6 +306,8 @@ namespace Phonestick
                 throw new UserError((exited ? "The drive could not be mounted." : "The drive did not appear in time.") + " Details in:\n" + logFile);
             }
             ShellNotify.DriveAdded(drive);
+            Prewarm(main);
+            FlushOldCopies(p, sd != null);
             if (sd == null) return;
 
             // The phone's drive is up: Explorer opens on it now, the card follows when ready.
@@ -326,6 +345,172 @@ namespace Phonestick
             return false;
         }
 
+        // ------------------------------------------------------------ copies left from before
+
+        /// <summary>A file an older version (with a write cache) had not finished uploading.</summary>
+        private sealed class OldCopy { public string Data, Meta, Remote; public long Size; public bool Sd; }
+
+        /// <summary>
+        /// Versions up to 0.3.11 cached writes and uploaded them afterwards. A copy whose upload had
+        /// not ended (Phonestick quit or killed, PC asleep, phone gone) is still in that cache,
+        /// marked "Dirty", in a folder named after the phone's address at the time, so a later
+        /// mount never even looked at it. Cached copies of files already on the phone are
+        /// dropped after an hour, as rclone itself would have.
+        /// </summary>
+        private static List<OldCopy> OldCopies()
+        {
+            var list = new List<OldCopy>();
+            foreach (var (name, sd) in new[] { ("cache", false), ("cache-sd", true) })
+            {
+                var root = Path.Combine(Config.Dir, name);
+                try
+                {
+                    if (!Directory.Exists(root)) continue;
+                    var bases = new List<string> { root };
+                    foreach (var d in Directory.GetDirectories(root))
+                        bases.Add(d);
+                    foreach (var b in bases)
+                    {
+                        var meta = Path.Combine(b, "vfsMeta");
+                        if (!Directory.Exists(meta)) continue;
+                        foreach (var remoteDir in Directory.GetDirectories(meta))
+                            foreach (var f in Directory.EnumerateFiles(remoteDir, "*", SearchOption.AllDirectories))
+                            {
+                                try
+                                {
+                                    var json = File.ReadAllText(f);
+                                    var rel = f.Substring(remoteDir.Length).TrimStart('\\');
+                                    var data = Path.Combine(b, "vfs", Path.GetFileName(remoteDir), rel);
+                                    if (!Regex.IsMatch(json, @"""Dirty""\s*:\s*true"))
+                                    {
+                                        if (DateTime.UtcNow - File.GetLastWriteTimeUtc(f) > TimeSpan.FromHours(1))
+                                        {
+                                            File.Delete(data);
+                                            File.Delete(f);
+                                        }
+                                        continue;
+                                    }
+                                    var size = Regex.Match(json, @"""Size""\s*:\s*(\d+)");
+                                    list.Add(new OldCopy
+                                    {
+                                        Data = data,
+                                        Meta = f,
+                                        Remote = DecodeLocalName(rel.Replace('\\', '/')),
+                                        Sd = sd,
+                                        Size = size.Success ? long.Parse(size.Groups[1].Value) : -1,
+                                    });
+                                }
+                                catch { }
+                            }
+                    }
+                }
+                catch { }
+            }
+            return list;
+        }
+
+        /// <summary>Removes earlier sessions' cache folders once no file is left in them.</summary>
+        private static void DropEmptySessions()
+        {
+            foreach (var name in new[] { "cache", "cache-sd" })
+            {
+                try
+                {
+                    var root = Path.Combine(Config.Dir, name);
+                    if (!Directory.Exists(root)) continue;
+                    foreach (var d in Directory.GetDirectories(root))
+                    {
+                        if (Directory.EnumerateFiles(d, "*", SearchOption.AllDirectories).Any()) continue;
+                        Directory.Delete(d, true); // folders only: checked empty of files just above
+                    }
+                }
+                catch { }
+            }
+        }
+
+        /// <summary>
+        /// The phone's name of a cached file: rclone stores characters Windows forbids in names
+        /// (: ? * and so on) as their full-width look-alikes, and a real full-width one behind a "‛".
+        /// </summary>
+        private static string DecodeLocalName(string s)
+        {
+            const string wide = "＜＞：＂｜？＊＼", plain = "<>:\"|?*\\";
+            var sb = new System.Text.StringBuilder(s.Length);
+            for (int i = 0; i < s.Length; i++)
+            {
+                if (s[i] == '‛' && i + 1 < s.Length && wide.IndexOf(s[i + 1]) >= 0) { sb.Append(s[++i]); continue; }
+                int k = wide.IndexOf(s[i]);
+                sb.Append(k >= 0 ? plain[k] : s[i]);
+            }
+            return sb.ToString();
+        }
+
+        private volatile bool _flushing;
+        private Process _flush;
+
+        /// <summary>
+        /// Uploads the copies an older version left in its write cache, one at a time, with a
+        /// separate rclone. Never over a newer file on the phone (--update). Each one leaves the
+        /// cache only once rclone reports it complete on the phone; a failure keeps it for the
+        /// next mount. A disconnect waits for this like for any copy (PendingUploads).
+        /// </summary>
+        private void FlushOldCopies(Phone p, bool sdMounted)
+        {
+            var items = OldCopies().Where(x => !x.Sd || sdMounted).ToList();
+            if (items.Count == 0) { DropEmptySessions(); return; }
+            _flushing = true;
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                try
+                {
+                    foreach (var it in items)
+                    {
+                        var m = _main;
+                        if (m == null || !m.Alive) return; // the drive went: next mount
+                        if (!File.Exists(it.Data) || (it.Size >= 0 && new FileInfo(it.Data).Length != it.Size))
+                        {
+                            Log.Write("copy left from before is incomplete in the cache, kept: " + it.Remote);
+                            continue;
+                        }
+                        Log.Write("uploading a copy left from before: " + it.Remote + " (" + (it.Size >> 20) + " MB)");
+                        var psi = RclonePsi(p, it.Sd ? AppInfo.SdServerScript : AppInfo.ServerScript, string.Join(" ", new[]
+                        {
+                            "copyto", Tools.Q(it.Data), Tools.Q(":sftp:" + it.Remote), "--update",
+                            // The cache folder name holds a full-width colon, which rclone would read back as ":".
+                            "--local-encoding", "None",
+                            "--sftp-shell-type", "none", "--sftp-disable-hashcheck", "--sftp-known-hosts-file", "none",
+                            "--config", Tools.Q(Path.Combine(Config.Dir, "rclone.conf")),
+                            "--log-file", Tools.Q(Path.Combine(Config.Dir, "rclone.log")), "--log-level", "NOTICE",
+                        }));
+                        int code;
+                        using (var proc = Process.Start(psi))
+                        {
+                            ChildJob.Add(proc);
+                            lock (_sync) _flush = proc;
+                            proc.WaitForExit();
+                            code = proc.ExitCode;
+                            lock (_sync) _flush = null;
+                        }
+                        if (code != 0) { Log.Write("upload of " + it.Remote + " failed (rclone exit " + code + "), kept for the next mount"); continue; }
+                        try { File.Delete(it.Data); File.Delete(it.Meta); } catch { }
+                        Log.Write("uploaded " + it.Remote);
+                        // The interrupted upload left its temporary "NAME.XXXXXXXX.partial" on the phone.
+                        var root = it.Sd ? _roots.sd : _roots.main;
+                        if (root != null)
+                            try
+                            {
+                                var prefix = "'" + (root + "/" + it.Remote).Replace("'", "'\\''") + "'";
+                                var r = p.Shell("for f in " + prefix + ".????????.partial; do [ -f \"$f\" ] && rm -f \"$f\"; done; true", 15000);
+                                if (!r.Ok) Log.Write("partial upload left on the phone: " + r.All.Trim());
+                            }
+                            catch (Exception ex) { Log.Write("partial upload left on the phone: " + ex.Message); }
+                    }
+                }
+                catch (Exception ex) { Log.Write("copies left from before: " + ex.Message); }
+                finally { _flushing = false; DropEmptySessions(); }
+            });
+        }
+
         private static Vol StartRclone(Phone p, string drive, string volname, string script, string logFile)
         {
             // rclone's remote control on a random local port with a random password: the only
@@ -342,46 +527,64 @@ namespace Phonestick
                 RcAuth = Convert.ToBase64String(System.Text.Encoding.ASCII.GetBytes(RcUser + ":" + rcPass)),
             };
 
+            // Files are written straight to the phone (no write cache): a copy to the drive ends
+            // only once the whole file is on the phone, so Explorer's own progress is the real
+            // one, and a cut and paste deletes the original only after that. With a write cache,
+            // Explorer said a 2 GB copy was done in seconds while the phone still had a partial
+            // file, and a moved file existed only in the PC's cache until its upload ended.
+            // The price: an app cannot open a file on the drive to edit it in place (read and
+            // write at once); it gets "access denied" and nothing is lost. Copies an older
+            // version left in its write cache are uploaded at the next connect (FlushOldCopies).
+            var cacheDir = Path.Combine(Config.Dir, script == AppInfo.SdServerScript ? "cache-sd" : "cache");
             var args = string.Join(" ", new[]
             {
                 "mount", ":sftp:", drive,
                 "--volname", Tools.Q(volname),
-                "--vfs-cache-mode", "writes",
-                "--dir-cache-time", "15s",
+                "--vfs-cache-mode", "off",
+                // No read-ahead buffer: Explorer opens many files for a few KB each (thumbnails,
+                // dates), and the pipe ramps reads up by itself for real copies (ReadShaper).
+                "--buffer-size", "0",
+                // Listings are kept: browsing never waits for the phone to list a big folder
+                // again. Folders open in Explorer are refreshed in the background (KeepFresh).
+                "--dir-cache-time", "10m",
                 "--sftp-shell-type", "none",
                 "--sftp-disable-hashcheck",
                 "--sftp-idle-timeout", "60s",
                 "--sftp-known-hosts-file", "none",
                 "--config", Tools.Q(Path.Combine(Config.Dir, "rclone.conf")),
-                // Each drive its own cache: both use the same remote name, and a copy left
-                // waiting for the next mount must go to the right one.
-                "--cache-dir", Tools.Q(Path.Combine(Config.Dir, script == AppInfo.SdServerScript ? "cache-sd" : "cache")),
+                "--cache-dir", Tools.Q(cacheDir),
                 "--log-file", Tools.Q(logFile),
                 "--log-level", "NOTICE",
                 "--rc", "--rc-addr", "127.0.0.1:" + rcPort,
             });
-            var psi = new ProcessStartInfo(Tools.Rclone, args)
-            {
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            Tools.ApplyAdbEnv(psi);
+            var psi = RclonePsi(p, script, args);
             // The remote-control login goes through the environment, not the command line,
             // where any local program could read it.
             psi.EnvironmentVariables["RCLONE_RC_USER"] = RcUser;
             psi.EnvironmentVariables["RCLONE_RC_PASS"] = rcPass;
-            // External "ssh" command for the SFTP backend: adb shell into the server script.
-            // rclone appends "-s sftp", which --pipe ignores.
-            psi.EnvironmentVariables["RCLONE_SFTP_SSH"] =
-                "\"" + System.Windows.Forms.Application.ExecutablePath + "\" --pipe " + p.Serial
-                + (script == AppInfo.SdServerScript ? " sd" : "");
-
             var proc = Process.Start(psi);
             // Tied to this app: if Phonestick ends in any way, Windows ends rclone and the drive goes.
             ChildJob.Add(proc);
             proc.EnableRaisingEvents = true;
             v.Proc = proc;
             return v;
+        }
+
+        /// <summary>rclone with the phone as its SFTP server, through our pipe.</summary>
+        private static ProcessStartInfo RclonePsi(Phone p, string script, string args)
+        {
+            var psi = new ProcessStartInfo(Tools.Rclone, args)
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            Tools.ApplyAdbEnv(psi);
+            // External "ssh" command for the SFTP backend: adb shell into the server script.
+            // rclone appends "-s sftp", which --pipe ignores.
+            psi.EnvironmentVariables["RCLONE_SFTP_SSH"] =
+                "\"" + System.Windows.Forms.Application.ExecutablePath + "\" --pipe " + p.Serial
+                + (script == AppInfo.SdServerScript ? " sd" : "");
+            return psi;
         }
 
         public void Stop()
@@ -394,6 +597,7 @@ namespace Phonestick
                 var m = _main;
                 if (m != null) { StopVol(m); ShellNotify.DriveRemoved(m.Drive); }
                 _main = null;
+                try { if (_flush != null && !_flush.HasExited) _flush.Kill(); } catch { }
                 // Their exit is handled (WaitForExit above raises Exited): free the handles.
                 try { sd?.Proc?.Dispose(); m?.Proc?.Dispose(); } catch { }
             }
@@ -418,10 +622,10 @@ namespace Phonestick
         }
 
         /// <summary>
-        /// Copies to P: finish in Explorer once the data is in rclone's local cache; the upload
-        /// to the phone goes on afterwards. Waits (up to <paramref name="max"/>) for those
-        /// uploads before the drive is closed, but not while nothing moves any more (the phone
-        /// left the Wi-Fi, say): rclone resumes any left over at the next mount.
+        /// Copies to the drive go straight to the phone, so normally nothing is left to finish
+        /// here. What can be: copies an older version left in its write cache, being uploaded now
+        /// (FlushOldCopies). Waits for them (up to <paramref name="max"/>) before the drive is
+        /// closed, as long as they move: what is left stays in the cache for the next connect.
         /// </summary>
         public void FinishUploads(Action<string> log, TimeSpan max)
         {
@@ -434,10 +638,12 @@ namespace Phonestick
             {
                 int n = PendingUploads();
                 if (n <= 0) return;
-                if (!told) { log("Finishing copies to the phone..."); Log.Write("waiting for " + n + " upload(s)"); told = true; }
+                if (!told) { Log.Write("waiting for " + n + " upload(s)"); told = true; }
+                log("Finishing copies to the phone: " + Describe(UploadStatus()));
                 long bytes = BytesMoved();
-                if (bytes != lastBytes || n != lastPending) lastProgress = DateTime.UtcNow;
-                else if (DateTime.UtcNow - lastProgress > TimeSpan.FromSeconds(15))
+                // The separate upload of an old copy reports no progress here: it counts as moving.
+                if (bytes != lastBytes || n != lastPending || _flushing) lastProgress = DateTime.UtcNow;
+                else if (DateTime.UtcNow - lastProgress > TimeSpan.FromSeconds(30))
                 {
                     Log.Write(n + " upload(s) not moving: left for the next mount");
                     return;
@@ -446,6 +652,41 @@ namespace Phonestick
                 lastPending = n;
                 Thread.Sleep(1000);
             }
+        }
+
+        /// <summary>
+        /// What is being sent to the phone now: the files still uploading (or waiting to), the
+        /// first one's name, and bytes done and in total across the uploads in progress. Null
+        /// when nothing is pending.
+        /// </summary>
+        public UploadInfo UploadStatus()
+        {
+            if (!IsMounted) return null;
+            var u = new UploadInfo();
+            foreach (var v in Vols())
+            {
+                try
+                {
+                    var vs = Rc(v, "vfs/stats");
+                    int Get(string k) { var m = Regex.Match(vs, "\"" + k + "\"\\s*:\\s*(\\d+)"); return m.Success ? int.Parse(m.Groups[1].Value) : 0; }
+                    u.Files += Get("uploadsInProgress") + Get("uploadsQueued");
+                    var st = Rc(v, "core/stats");
+                    var t = Regex.Match(st, "\"transferring\"\\s*:\\s*\\[(.*?)\\]\\s*[,}]", RegexOptions.Singleline);
+                    if (!t.Success) continue;
+                    foreach (Match e in Regex.Matches(t.Groups[1].Value, "\\{[^{}]*\\}"))
+                    {
+                        var b = Regex.Match(e.Value, "\"bytes\"\\s*:\\s*(\\d+)");
+                        var z = Regex.Match(e.Value, "\"size\"\\s*:\\s*(\\d+)");
+                        var n = Regex.Match(e.Value, "\"name\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
+                        if (b.Success) u.Done += long.Parse(b.Groups[1].Value);
+                        if (z.Success) u.Total += long.Parse(z.Groups[1].Value);
+                        if (u.Name == null && n.Success) u.Name = Regex.Unescape(n.Groups[1].Value);
+                    }
+                }
+                catch { }
+            }
+            if (_flushing) u.Files++;
+            return u.Files > 0 ? u : null;
         }
 
         /// <summary>Bytes transferred so far on both drives (-1 when rclone cannot be asked).</summary>
@@ -474,7 +715,7 @@ namespace Phonestick
         /// <summary>Uploads queued or in progress on both drives, or -1 when rclone cannot be asked.</summary>
         private int PendingUploads()
         {
-            int total = 0;
+            int total = _flushing ? 1 : 0;
             foreach (var v in Vols())
             {
                 try
@@ -491,12 +732,77 @@ namespace Phonestick
         /// <summary>One client for every call to rclone's remote control (it keeps the connection).</summary>
         private static readonly Lazy<HttpClient> RcHttp = new Lazy<HttpClient>(() => new HttpClient { Timeout = TimeSpan.FromSeconds(10) });
 
-        private static string Rc(Vol v, string command)
+        // ------------------------------------------------------------ folder listings
+
+        /// <summary>When each folder open in Explorer was last refreshed (or first seen).</summary>
+        private readonly Dictionary<string, DateTime> _refreshed = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        /// <summary>How often a folder open in Explorer is listed again from the phone.</summary>
+        private static readonly TimeSpan RefreshEvery = TimeSpan.FromSeconds(30);
+        /// <summary>A folder just opened is listed again this soon, after Explorer's own first burst.</summary>
+        private static readonly TimeSpan RefreshFirst = TimeSpan.FromSeconds(5);
+
+        /// <summary>
+        /// Folder listings are kept 10 minutes (--dir-cache-time), so browsing never waits for the
+        /// phone to list a big folder again. Folders open in Explorer are refreshed in the
+        /// background instead: photos taken on the phone show up there within half a minute
+        /// (F5), without anyone waiting on it.
+        /// </summary>
+        public void KeepFresh(IEnumerable<string> openFolders)
+        {
+            var now = DateTime.UtcNow;
+            var vols = Vols().ToList();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var path in openFolders)
+            {
+                var v = vols.FirstOrDefault(x => path.StartsWith(x.Drive, StringComparison.OrdinalIgnoreCase));
+                if (v == null) continue;
+                seen.Add(path);
+                lock (_refreshed)
+                {
+                    if (!_refreshed.TryGetValue(path, out var last)) { _refreshed[path] = now - RefreshEvery + RefreshFirst; continue; }
+                    if (now - last < RefreshEvery) continue;
+                    _refreshed[path] = now;
+                }
+                var dir = path.Substring(2).Trim('\\').Replace('\\', '/');
+                try { Rc(v, "vfs/refresh", "{\"dir\":" + JsonString(dir) + ",\"_async\":true}"); } catch { }
+            }
+            lock (_refreshed)
+                foreach (var gone in _refreshed.Keys.Where(k => !seen.Contains(k)).ToList()) _refreshed.Remove(gone);
+        }
+
+        /// <summary>Lists the usual photo and download folders ahead, in the background, right after mounting.</summary>
+        private static void Prewarm(Vol v)
+        {
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                try
+                {
+                    // Up to the drive showing first: the listing must not hold up Explorer's own.
+                    Thread.Sleep(1500);
+                    Rc(v, "vfs/refresh", "{\"dir\":\"DCIM\",\"dir2\":\"DCIM/Camera\",\"dir3\":\"Pictures\",\"dir4\":\"Download\",\"dir5\":\"Movies\",\"_async\":true}");
+                }
+                catch { }
+            });
+        }
+
+        private static string JsonString(string s)
+        {
+            var sb = new System.Text.StringBuilder("\"");
+            foreach (var c in s)
+            {
+                if (c == '"' || c == '\\') sb.Append('\\').Append(c);
+                else if (c < 0x20) sb.Append("\\u").Append(((int)c).ToString("x4"));
+                else sb.Append(c);
+            }
+            return sb.Append('"').ToString();
+        }
+
+        private static string Rc(Vol v, string command, string json = "{}")
         {
             using (var req = new HttpRequestMessage(HttpMethod.Post, v.RcBase + command))
             {
                 req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", v.RcAuth);
-                req.Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json");
+                req.Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
                 using (var resp = RcHttp.Value.SendAsync(req).Result)
                     return resp.Content.ReadAsStringAsync().Result;
             }

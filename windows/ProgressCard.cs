@@ -15,8 +15,8 @@ namespace Phonestick
     internal sealed class ProgressCard : Form
     {
         private const float W = 340, Pad = 16;
-        /// <summary>How long a step runs before its hint (what to check) shows.</summary>
-        private const int HintAfterMs = 8000;
+        /// <summary>How long a step runs before its hint (what to check) shows, by default.</summary>
+        private const int HintAfterDefault = 8000;
         private static readonly StringFormat OneLine = new StringFormat(StringFormat.GenericTypographic)
         { Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap };
 
@@ -26,16 +26,19 @@ namespace Phonestick
         private readonly int _start = Environment.TickCount;
         private readonly string _title;
         private readonly Action _cancel;
+        private readonly int _hintAfterMs;
         private int _stepStart = Environment.TickCount;
         private string _step = "", _hint;
         private bool _hintShown, _hoverCancel, _closing, _cancelClicked;
         private RectangleF _cancelR;
 
         /// <param name="cancel">Shown as a Cancel link when not null.</param>
-        public ProgressCard(string title, string step, Action cancel)
+        /// <param name="hintAfterMs">How long a step runs before its hint shows (0: at once).</param>
+        public ProgressCard(string title, string step, Action cancel, int hintAfterMs = HintAfterDefault)
         {
             _title = title;
             _cancel = cancel;
+            _hintAfterMs = hintAfterMs;
             var wa = Screen.PrimaryScreen.WorkingArea; // the taskbar with the tray icon
             S = Flyout.DpiScaleAt(new Point(wa.Right - 1, wa.Bottom - 1));
             _logo = Icons.Logo((int)Math.Round(20 * S));
@@ -55,11 +58,16 @@ namespace Phonestick
         public void SetStep(string text)
         {
             var parts = (text ?? "").Split(new[] { '\n' }, 2);
-            if (parts[0] == _step && (parts.Length > 1 ? parts[1] : null) == _hint) return;
+            var hint = parts.Length > 1 ? parts[1] : null;
+            if (parts[0] == _step && hint == _hint) return;
             _step = parts[0];
-            _hint = parts.Length > 1 ? parts[1] : null;
-            _stepStart = Environment.TickCount;
-            if (_hintShown) { _hintShown = false; Place(); }
+            // Same hint (progress text changing, say): the step goes on, its hint stays.
+            if (hint != _hint)
+            {
+                _hint = hint;
+                _stepStart = Environment.TickCount;
+                if (_hintShown) { _hintShown = false; Place(); }
+            }
             Invalidate();
         }
 
@@ -109,7 +117,7 @@ namespace Phonestick
             bool panel = fly != null && !fly.IsDisposed && fly.Visible;
             if (panel && Visible) Hide();
             else if (!panel && !Visible) Show();
-            if (!_hintShown && _hint != null && unchecked(Environment.TickCount - _stepStart) >= HintAfterMs)
+            if (!_hintShown && _hint != null && unchecked(Environment.TickCount - _stepStart) >= _hintAfterMs)
             {
                 _hintShown = true;
                 _hintH = MeasureHint();

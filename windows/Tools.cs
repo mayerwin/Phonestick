@@ -17,7 +17,7 @@ namespace Phonestick
         public string All => (Out + "\n" + Err).Trim();
     }
 
-    /// <summary>Finds the helper programs (adb, rclone, scrcpy) and runs them.</summary>
+    /// <summary>Finds the helper programs (adb, scrcpy, sshfs) and runs them.</summary>
     internal static class Tools
     {
         private static readonly string Local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
@@ -40,7 +40,11 @@ namespace Phonestick
             new[] { Path.Combine(Local, "Android", "Sdk", "platform-tools") }.Concat(WingetLinks),
             "Google.PlatformTools*", "Genymobile.scrcpy*");
 
-        public static string Rclone => Find("rclone.exe", WingetLinks, "Rclone.Rclone*");
+        /// <summary>SSHFS-Win's sshfs (an MSI install, so in Program Files rather than winget's folders).</summary>
+        public static string Sshfs => Find("sshfs.exe",
+            new[] { "ProgramW6432", "ProgramFiles", "ProgramFiles(x86)" }
+                .Select(Environment.GetEnvironmentVariable).Where(d => !string.IsNullOrEmpty(d))
+                .Select(d => Path.Combine(d, "SSHFS-Win", "bin")));
 
         public static string Scrcpy => Find("scrcpy.exe", WingetLinks, "Genymobile.scrcpy*");
 

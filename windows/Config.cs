@@ -6,8 +6,8 @@ using System.Linq;
 namespace Phonestick
 {
     /// <summary>
-    /// Settings stored as key=value lines in settings.ini. All of Phonestick's data (settings, log,
-    /// rclone config and cache) lives in a "Phonestick.config" folder next to the exe, so the app
+    /// Settings stored as key=value lines in settings.ini. All of Phonestick's data (settings and
+    /// log) lives in a "Phonestick.config" folder next to the exe, so the app
     /// stays portable: delete the exe and that folder and nothing is left behind.
     /// </summary>
     internal sealed class Config
@@ -43,7 +43,7 @@ namespace Phonestick
             {
                 if (File.Exists(Path.Combine(dir, "settings.ini"))) return;
                 var old = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), AppInfo.Name);
-                foreach (var name in new[] { "settings.ini", "rclone.conf" })
+                foreach (var name in new[] { "settings.ini" })
                 {
                     var src = Path.Combine(old, name);
                     if (File.Exists(src)) File.Copy(src, Path.Combine(dir, name), false);

@@ -15,7 +15,7 @@
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\phonestick.ico</ApplicationIcon>
-    <Version>0.3.13</Version>
+    <Version>0.4.0</Version>
     <!-- A single file: no Phonestick.exe.config (.NET Framework 4.8 runs the exe without it). -->
     <GenerateSupportedRuntime>false</GenerateSupportedRuntime>
   </PropertyGroup>
@@ -32,11 +32,13 @@
     <Reference Include="System.Web.Extensions" />
   </ItemGroup>
 
-  <!-- The phone app is embedded in the exe, so the release is a single file. -->
+  <!-- The phone app and the phone's file server are embedded in the exe, so the release is a single file. -->
   <ItemGroup>
     <EmbeddedResource Include="..\android\app\build\outputs\apk\release\app-release.apk"
           LogicalName="Phonestick.Assets.Phonestick.apk"
           Condition="Exists('..\android\app\build\outputs\apk\release\app-release.apk')" />
+    <!-- Built by phone-server\build.ps1 (needs Go). -->
+    <EmbeddedResource Include="..\phone-server\build\psftp-*.gz" LogicalName="Phonestick.Assets.%(Filename)%(Extension)" />
   </ItemGroup>
 
 </Project>

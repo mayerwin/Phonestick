@@ -15,16 +15,6 @@ namespace Phonestick
         [STAThread]
         private static int Main(string[] args)
         {
-            // Internal: the "ssh" command rclone runs to reach the phone's file server. Kept apart
-            // from everything else, so these short-lived processes never load Windows Forms.
-            if (args.Length >= 2 && args[0] == "--pipe")
-                return AdbPipe.Run(args[1], "sh " + (args.Length >= 3 && args[2] == "sd" ? AppInfo.SdServerScript : AppInfo.ServerScript));
-            return App(args);
-        }
-
-        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-        private static int App(string[] args)
-        {
             // Internal: writes a QR code PNG, to check the encoder ("--qr-preview TEXT FILE").
             if (args.Length >= 3 && args[0] == "--qr-preview")
             {

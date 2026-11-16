@@ -7,7 +7,7 @@ using System.Reflection;
 namespace Phonestick
 {
     /// <summary>
-    /// Installs the helper programs Phonestick needs (scrcpy, which brings adb; rclone; WinFsp)
+    /// Installs the helper programs Phonestick needs (scrcpy, which brings adb; WinFsp; SSHFS-Win)
     /// with winget, the first time they are needed. Nothing to do by hand.
     /// </summary>
     internal static class Helpers
@@ -23,8 +23,8 @@ namespace Phonestick
         private static readonly Helper[] All =
         {
             new Helper { Id = "Genymobile.scrcpy", Label = "scrcpy and adb", Present = () => Tools.Scrcpy != null && Tools.Adb != null },
-            new Helper { Id = "Rclone.Rclone", Label = "rclone", Present = () => Tools.Rclone != null },
             new Helper { Id = "WinFsp.WinFsp", Label = "WinFsp (Windows may ask for permission)", Present = () => Tools.WinFspInstalled },
+            new Helper { Id = "SSHFS-Win.SSHFS-Win", Label = "SSHFS-Win (Windows may ask for permission)", Present = () => Tools.Sshfs != null },
         };
 
         public static bool AllPresent => All.All(h => h.Present());

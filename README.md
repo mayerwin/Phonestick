@@ -92,7 +92,7 @@ Quick to set up, nothing to maintain.
 **On Windows**
 
 1. Download **[Phonestick.exe](https://github.com/mayerwin/Phonestick/releases/latest/download/Phonestick.exe)** and run it. It sits in the tray.
-2. That's it on this side. On first run it fetches the free helpers it builds on (scrcpy with adb, rclone and WinFsp) through winget. Windows asks once to allow WinFsp, the driver behind the drive letter.
+2. That's it on this side. On first run it fetches the free helpers it builds on (scrcpy with adb, WinFsp and SSHFS-Win) through winget. Windows asks once to allow WinFsp, the driver behind the drive letter, and SSHFS-Win, which mounts the phone with it.
 
 **On the phone**
 
@@ -155,7 +155,9 @@ Phonestick adds no new server and no new protocol. It uses Android's own Wireles
 **On the computer**
 
 - The tray app does nothing until you click it: no timers, no network, no adb.
-- "Open phone files" finds the phone over mDNS, connects, and mounts it with [rclone](https://rclone.org) and [WinFsp](https://winfsp.dev). The file server is rclone itself, copied once to `/data/local/tmp/phonestick` on the phone and run through the adb shell only while the drive is mounted.
+- "Open phone files" finds the phone over mDNS, connects, and mounts it the way Linux mounts a folder over SSH: [sshfs](https://github.com/libfuse/sshfs) (from [SSHFS-Win](https://github.com/winfsp/sshfs-win), on [WinFsp](https://winfsp.dev)) on the PC, and a small SFTP server on the phone (`phone-server/`, about 3 MB, embedded in the exe and copied once to `/data/local/tmp/phonestick`). The server runs through the adb shell only while the drive is mounted, and serves the real files with the adb shell's rights. No port is opened on the phone. On the PC, sshfs reaches it through a loopback port that only that sshfs process may use.
+- Each file operation is the same operation on the phone, so the drive behaves like a USB stick: apps open, edit and save files in place, Explorer's progress bar is the real transfer, and every write is acknowledged by the phone before the app's write returns. A cut and paste deletes the original only once the file is on the phone.
+- Browsing is tuned for Wi-Fi: folder listings are kept for 30 s, and the link reads ahead when a file is read in sequence and keeps files open for a few seconds after Explorer closes them, so thumbnails need far fewer round trips.
 - "Show screen" opens [scrcpy](https://github.com/Genymobile/scrcpy).
 - Phonestick runs its own adb server on port 5038 and shuts it down when you disconnect, so no connection stays open and other adb tools on port 5037 are not disturbed.
 - Android shows a "Wireless debugging connected" notification whose channel cannot be silenced. Phonestick snoozes it right after connecting, so it does not linger (it can still flash for a second).
@@ -187,7 +189,8 @@ Phonestick adds no new server and no new protocol. It uses Android's own Wireles
 ## 📋 Limits
 
 - Your router must let devices on the Wi-Fi see each other (no client isolation), and Windows must let `adb.exe` through the firewall for discovery.
-- Copies to the phone are written straight to it, with no cache on the PC: Explorer's progress is the real transfer, and a cut and paste removes the original only once the file is complete on the phone. While a copy runs, the phone shows it under a temporary `.partial` name. The flip side: an app can't open a file on the drive to edit it in place (it gets "access denied"). Copy the file to the PC, edit it there, and copy it back.
+- New photos taken on the phone show up in an open Explorer window within 30 seconds (press F5).
+- If the Wi-Fi link drops during a copy, Explorer reports an error and keeps the original. The part already copied stays on the phone under the file's name, as it would on a USB stick pulled out early.
 - Developer options must stay on. Turning them off disables all debugging.
 - While access is on, switching Wireless debugging off in Settings does not stick: Phonestick turns it back on. Use the tile.
 - Phones with aggressive battery managers may delay the app's wake-ups or stop its listener. Setup exempts it from battery optimisation, which costs nothing since the listener sleeps between events. Settings › Apps › Force stop removes everything until the app or its tile is opened again (that is how Android defines force-stop).
@@ -197,14 +200,18 @@ Phonestick adds no new server and no new protocol. It uses Android's own Wireles
 | Part | What it is |
 |---|---|
 | [`android/`](android/) | The phone app: a Quick Settings tile and one screen. About 98 KB, plain Java, no libraries. |
-| [`windows/`](windows/) | The tray app. .NET Framework 4.8, built into Windows 10 and 11. The phone app is embedded in the exe. |
+| [`windows/`](windows/) | The tray app. .NET Framework 4.8, built into Windows 10 and 11. The phone app and the phone's file server are embedded in the exe. |
+| [`phone-server/`](phone-server/) | The file server run on the phone while a drive is mounted: SFTP on stdin and stdout, in Go ([pkg/sftp](https://github.com/pkg/sftp)). |
 | [`docs/`](docs/) | The website. |
 
 ```bash
 # 1. Phone app (JDK 17+ and the Android SDK)
 cd android && gradlew assembleRelease
 
-# 2. Tray app (.NET SDK 8+), embeds the APK from step 1
+# 2. Phone file server (Go 1.25+), for every Android CPU
+powershell -File ../phone-server/build.ps1
+
+# 3. Tray app (.NET SDK 8+), embeds the APK and the servers
 cd ../windows && dotnet build -c Release
 ```
 
@@ -212,7 +219,7 @@ The APK is signed with the committed `sideload.keystore` (password `sideload`). 
 
 ## 🙏 Credits
 
-- [scrcpy](https://github.com/Genymobile/scrcpy), [rclone](https://rclone.org) and [WinFsp](https://winfsp.dev) do the heavy lifting.
+- [scrcpy](https://github.com/Genymobile/scrcpy), [WinFsp](https://winfsp.dev), [SSHFS-Win](https://github.com/winfsp/sshfs-win) and [pkg/sftp](https://github.com/pkg/sftp) do the heavy lifting.
 - Icons follow [Lucide](https://lucide.dev) (ISC licence). Headings use [Manrope](https://github.com/sharanda/manrope) Bold (SIL Open Font License, see `windows/Assets/Manrope-OFL.txt`).
 
 ## License

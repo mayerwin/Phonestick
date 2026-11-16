@@ -5,10 +5,10 @@ using System.Runtime.InteropServices;
 namespace Phonestick
 {
     /// <summary>
-    /// A Windows job object that holds the helper processes this app starts (rclone, which owns the
+    /// A Windows job object that holds the helper processes this app starts (sshfs, which owns the
     /// drive letter, and scrcpy). It is set to kill everything in it when its last handle closes, and
     /// only this process holds that handle. So when Phonestick ends in any way (Quit, a crash, Task
-    /// Manager, a power-off of the process), Windows itself ends rclone, and with it the drive. No
+    /// Manager, a power-off of the process), Windows itself ends sshfs, and with it the drive. No
     /// code of ours has to run for that, which is the point.
     /// </summary>
     internal static class ChildJob
@@ -42,9 +42,9 @@ namespace Phonestick
         }
 
         /// <summary>
-        /// Puts a just-started process in the job. Processes it starts later (rclone's adb pipes) join
-        /// the job too. Returns false if Windows refused; the start-up cleanup (Mount.KillStale) then
-        /// remains the fallback.
+        /// Puts a just-started process in the job. Processes it starts later join the job too.
+        /// Returns false if Windows refused; the start-up cleanup (Mount.KillStale) then remains
+        /// the fallback.
         /// </summary>
         public static bool Add(Process p)
         {

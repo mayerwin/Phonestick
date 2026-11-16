@@ -35,8 +35,6 @@ namespace Phonestick
         private readonly Config _cfg = Config.Load();
         private readonly Mount _mount = new Mount();
         private readonly System.Windows.Forms.Timer _idleTimer = new System.Windows.Forms.Timer { Interval = 60000 };
-        private readonly System.Threading.Timer _freshTimer;
-        private int _freshening;
 
         private volatile Process _scrcpy;
         private volatile bool _busy;
@@ -63,15 +61,6 @@ namespace Phonestick
             _mount.Ended += () => _ui.Post(_ => OnMountEnded(), null);
             _mount.SdChanged += () => _ui.Post(_ => RefreshMenu(), null);
             _idleTimer.Tick += (s, e) => CheckIdle();
-            // While mounted: the phone folders open in Explorer are listed again in the
-            // background now and then, so new photos show up without anyone waiting (Mount.KeepFresh).
-            _freshTimer = new System.Threading.Timer(_ =>
-            {
-                if (!_mount.IsMounted || Interlocked.Exchange(ref _freshening, 1) == 1) return;
-                try { _mount.KeepFresh(ExplorerFolders.Open()); }
-                catch { }
-                finally { Volatile.Write(ref _freshening, 0); }
-            }, null, 5000, 5000);
             _tray.BalloonTipClicked += (s, e) => { var a = _balloonClick; _balloonClick = null; a?.Invoke(); };
             _tray.BalloonTipClosed += (s, e) => _balloonClick = null;
             // Redraw the tray glyph when the taskbar theme or scaling changes (events, not polling).
@@ -386,8 +375,6 @@ namespace Phonestick
         {
             if (_mount.IsMounted) { Explore(_mount.Drive); return; }
             if (string.IsNullOrEmpty(_cfg.PhoneSerial)) { SetupForm.ShowSetup(this, _cfg); return; }
-            // The PC's rclone version is asked once per run: meanwhile, not on the way.
-            Task.Run(() => { try { if (Tools.Rclone != null) Mount.RcloneVersion(); } catch { } });
             Run("Connecting to your phone", log =>
             {
                 var sw = Stopwatch.StartNew();
@@ -572,8 +559,8 @@ namespace Phonestick
         private void OnSuspend()
         {
             // Runs on the UI thread, and Windows gives only a moment before sleeping: the drive and
-            // the screen close at once (no wait for uploads: rclone resumes those at the next
-            // mount); the slower adb clean-up goes on in the background, or after the wake-up.
+            // the screen close at once (a copy still running fails in Explorer, which keeps the
+            // original); the slower adb clean-up goes on in the background, or after the wake-up.
             if (!_mount.IsMounted && !ScreenOpen) return;
             Log.Write("going to sleep: disconnecting");
             if (_busy && Connecting) _cancelled = true;
@@ -767,7 +754,6 @@ namespace Phonestick
             {
                 _tray.Dispose();
                 _idleTimer.Dispose();
-                _freshTimer.Dispose();
             }
             base.Dispose(disposing);
         }

@@ -355,7 +355,6 @@ namespace Phonestick
                 // Download and check first: if that fails, the drive and screen stay as they are.
                 Updater.Download(info, log);
                 // Never swap the exe under a mounted drive or a screen session.
-                _mount.FinishUploads(log, TimeSpan.FromHours(1));
                 DisconnectAll();
                 Updater.Swap(info, log);
                 done = true;
@@ -555,11 +554,7 @@ namespace Phonestick
                 Task.Run(() => DisconnectAll());
                 return;
             }
-            Run("Disconnecting", log =>
-            {
-                _mount.FinishUploads(log, TimeSpan.FromHours(1));
-                DisconnectAll();
-            });
+            Run("Disconnecting", log => DisconnectAll());
         }
 
         private void DisconnectAll()
@@ -755,13 +750,8 @@ namespace Phonestick
         private void ExitApp()
         {
             if (Flyout.Current != null && !Flyout.Current.IsDisposed) Flyout.Current.Close();
-            // Copies still on their way to the phone finish first. The icon stays meanwhile (it
-            // says so), so the app is never running unseen.
-            if (Run("Disconnecting", log =>
-                {
-                    _mount.FinishUploads(log, TimeSpan.FromHours(1));
-                    DisconnectAll();
-                }, after: () => { _tray.Visible = false; ExitThread(); }))
+            // The icon stays until the drive is closed, so the app is never running unseen.
+            if (Run("Disconnecting", log => DisconnectAll(), after: () => { _tray.Visible = false; ExitThread(); }))
                 return;
             // Busy: an update cannot be interrupted, a connect is cancelled.
             if (_busyText == "Updating...") return;
